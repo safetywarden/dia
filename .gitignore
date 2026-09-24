@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+out_*/
+*.db
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+.vercel/

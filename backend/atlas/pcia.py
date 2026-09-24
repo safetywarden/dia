@@ -60,11 +60,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Callable
 
-VERSION = "0.9.0"
-UA = "bconz-PCIA/0.9 (research data partnership outreach; contact: hello@bconz.com)"
-TIMEOUT = 40
+from . import orgs
+from .http import get as _get
+
+VERSION = "1.0.0"
+Progress = Callable[[str], None]
 
 
 # ------------------------------------------------------- lawful basis model
@@ -110,8 +112,10 @@ class Provenance:
     lawful_basis: str
     retrieved_at: str
     verbatim_snippet: str                 # the published text carrying the value
-    jurisdiction: str = "UNKNOWN"
+    jurisdiction: str = "UNKNOWN"         # regime: IN | EU_UK | US | OTHER | UNKNOWN
     publisher: str = ""                   # who published it, if not the person
+    country: str = ""                     # ISO code the jurisdiction was read from
+    jurisdiction_source: str = ""         # what evidence decided it
 
 
 @dataclass
@@ -155,44 +159,74 @@ def assert_exportable(recs: list[ContactRecord]) -> None:
             f"emitted. First: {bad[0].person_name} — {bad[0].gate_reason}")
 
 
-# ------------------------------------------------------------------ fetching
-
-def _get(url: str, as_json: bool = True, retries: int = 2):
-    for attempt in range(retries + 1):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA})
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                raw = r.read().decode("utf-8", "replace")
-                return json.loads(raw) if as_json else raw
-        except Exception as exc:
-            if attempt == retries:
-                print(f"    ! {type(exc).__name__} {url[:70]}", file=sys.stderr)
-                return None
-            time.sleep(1.2 * (attempt + 1))
-    return None
-
-
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
 CORRESP_RE = re.compile(r"<corresp\b.*?</corresp>", re.S | re.I)
 EMAIL_TAG = re.compile(r"<email[^>]*>([^<]+)</email>", re.I)
+AFF_RE = re.compile(r"<aff\b.*?</aff>", re.S | re.I)
 TAGS = re.compile(r"<[^>]+>")
 
-# Country hints for jurisdiction, which decides which regime applies.
-EU_EEA_UK = {"united kingdom", "uk", "england", "scotland", "wales", "ireland",
-             "germany", "france", "italy", "spain", "netherlands", "belgium",
-             "sweden", "denmark", "norway", "finland", "poland", "austria",
-             "portugal", "greece", "czech", "hungary", "romania", "switzerland"}
+# Country-code TLDs that settle jurisdiction on their own. Generic TLDs
+# (.com, .org, .edu is US-only in practice) are handled separately.
+CCTLD = {"in": "IN", "uk": "GB", "de": "DE", "fr": "FR", "it": "IT", "es": "ES",
+         "nl": "NL", "be": "BE", "se": "SE", "dk": "DK", "no": "NO", "fi": "FI",
+         "pl": "PL", "at": "AT", "pt": "PT", "gr": "GR", "cz": "CZ", "hu": "HU",
+         "ro": "RO", "ch": "CH", "ie": "IE", "jp": "JP", "cn": "CN", "kr": "KR",
+         "au": "AU", "ca": "CA", "sg": "SG", "tw": "TW", "br": "BR", "il": "IL",
+         "edu": "US", "gov": "US"}
+# International dialling prefixes. "+1" is shared with Canada, so it proves
+# North America rather than the US; it is only used when nothing better exists.
+PHONE_CC = [("+91", "IN"), ("+44", "GB"), ("+49", "DE"), ("+33", "FR"), ("+39", "IT"),
+            ("+34", "ES"), ("+31", "NL"), ("+32", "BE"), ("+46", "SE"), ("+45", "DK"),
+            ("+47", "NO"), ("+358", "FI"), ("+48", "PL"), ("+43", "AT"), ("+351", "PT"),
+            ("+30", "GR"), ("+420", "CZ"), ("+36", "HU"), ("+40", "RO"), ("+41", "CH"),
+            ("+353", "IE"), ("+81", "JP"), ("+86", "CN"), ("+82", "KR"), ("+61", "AU"),
+            ("+65", "SG"), ("+972", "IL"), ("+55", "BR"), ("+1", "US")]
+
+
+def _regime(country: str) -> str:
+    if not country:
+        return "UNKNOWN"
+    if country == "IN":
+        return "IN"
+    if country in orgs.EU_EEA_UK:
+        return "EU_UK"
+    if country == "US":
+        return "US"
+    return "OTHER"
+
+
+def resolve_jurisdiction(*evidence: tuple[str, str]) -> tuple[str, str, str]:
+    """First piece of evidence that names a country wins.
+
+    `evidence` is (label, text) pairs in priority order: the published text
+    nearest the contact first, the organisation's home country last. Returns
+    (regime, country, which evidence decided). The contact's own location is
+    what counts, so an email's ccTLD outranks the lead's home country.
+    """
+    weak: tuple[str, str, str] | None = None
+    for label, text in evidence:
+        if not text:
+            continue
+        if label == "phone" and re.sub(r"[^\d+]", "", text).startswith("+1"):
+            weak = weak or ("US", "US", "phone (+1, North America)")
+            continue
+        if label == "email":
+            tld = text.rsplit(".", 1)[-1].lower()
+            c = CCTLD.get(tld, "")
+        elif label == "phone":
+            digits = re.sub(r"[^\d+]", "", text)
+            c = next((cc for pre, cc in PHONE_CC if digits.startswith(pre)), "")
+        elif label in ("lead_country", "footprint"):
+            c = text if len(text) == 2 else ""
+        else:
+            c = orgs.country_code(text)
+        if c:
+            return _regime(c), c, label
+    return weak or ("UNKNOWN", "", "")
 
 
 def _jurisdiction(text: str) -> str:
-    t = (text or "").lower()
-    if "india" in t:
-        return "IN"
-    if any(k in t for k in EU_EEA_UK):
-        return "EU_UK"
-    if any(k in t for k in ("united states", "usa", " us ", "u.s.")):
-        return "US"
-    return "UNKNOWN"
+    return resolve_jurisdiction(("text", text))[0]
 
 
 def _basis_for(jur: str, source_type: str) -> str:
@@ -207,9 +241,21 @@ def _basis_for(jur: str, source_type: str) -> str:
     return Basis.DPDP_3C_II
 
 
+def _prov(source_url: str, source_type: str, snippet: str, publisher: str,
+          *evidence: tuple[str, str]) -> Provenance:
+    jur, country, how = resolve_jurisdiction(*evidence)
+    return Provenance(
+        source_url=source_url, source_type=source_type,
+        lawful_basis=_basis_for(jur, source_type),
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+        verbatim_snippet=snippet, jurisdiction=jur, publisher=publisher,
+        country=country, jurisdiction_source=how)
+
+
 # ------------------------------------------------- source: published papers
 
-def contacts_from_publication(pmid: str, lead_org: str, why: str) -> list[ContactRecord]:
+def contacts_from_publication(pmid: str, lead_org: str, why: str,
+                              lead_country: str = "") -> list[ContactRecord]:
     """Corresponding-author email from the open-access full text.
 
     The strongest basis available: the author placed the address in the paper
@@ -231,6 +277,7 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str) -> list[Contac
     open_access = rec.get("isOpenAccess") == "Y" and rec.get("inEPMC") == "Y"
     title = rec.get("title", "")[:150]
     affil = rec.get("affiliation", "") or ""
+    authors = ((rec.get("authorList") or {}).get("author") or [])
     article_url = f"https://europepmc.org/article/MED/{pmid}"
 
     if not (pmcid and open_access):
@@ -241,14 +288,9 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str) -> list[Contac
                 org_display=lead_org, org_key="", person_name=author,
                 person_role="first author",
                 channel="none", value=None,
-                provenance=Provenance(
-                    source_url=article_url,
-                    source_type=SourceType.SELF_PUBLISHED_CORRESPONDENCE,
-                    lawful_basis=_basis_for(_jurisdiction(affil),
-                                            SourceType.SELF_PUBLISHED_CORRESPONDENCE),
-                    retrieved_at=datetime.now(timezone.utc).isoformat(),
-                    verbatim_snippet=f"Author of: {title}",
-                    jurisdiction=_jurisdiction(affil), publisher="Europe PMC"),
+                provenance=_prov(article_url, SourceType.SELF_PUBLISHED_CORRESPONDENCE,
+                                 f"Author of: {title}", "Europe PMC",
+                                 ("affiliation", affil), ("lead_country", lead_country)),
                 why_this_person=why,
                 notes=["article is not open access — no published email; "
                        "approach via the institution's published research office"]))
@@ -260,6 +302,8 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str) -> list[Contac
     if not xml:
         return out
 
+    aff_text = " ".join(re.sub(r"\s+", " ", TAGS.sub(" ", a))
+                        for a in AFF_RE.findall(xml)[:3])
     seen: set[str] = set()
     for block in CORRESP_RE.findall(xml)[:6]:
         emails = EMAIL_TAG.findall(block) or EMAIL_RE.findall(TAGS.sub(" ", block))
@@ -268,30 +312,45 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str) -> list[Contac
         name_m = re.search(
             r"(?:Corresponding Authors?|Correspondence(?: to)?)\s*[:\-]?\s*"
             r"([A-Z][A-Za-z.\-']+(?:\s+[A-Z][A-Za-z.\-']+){0,3})", plain)
-        name = name_m.group(1).strip() if name_m else "Corresponding author"
+        label_name = name_m.group(1).strip() if name_m else ""
         for em in emails:
             em = em.strip().rstrip(".,;")
             if not EMAIL_RE.fullmatch(em) or em.lower() in seen:
                 continue
             seen.add(em.lower())
-            jur = _jurisdiction(plain + " " + affil)
+            name = label_name or _author_for_email(em, authors) or "Corresponding author"
             out.append(ContactRecord(
                 org_display=lead_org, org_key="", person_name=name,
                 person_role="corresponding author", channel="email", value=em,
-                provenance=Provenance(
-                    source_url=f"https://europepmc.org/article/PMC/{pmcid}",
-                    source_type=SourceType.SELF_PUBLISHED_CORRESPONDENCE,
-                    lawful_basis=_basis_for(jur, SourceType.SELF_PUBLISHED_CORRESPONDENCE),
-                    retrieved_at=datetime.now(timezone.utc).isoformat(),
-                    verbatim_snippet=plain[:300], jurisdiction=jur,
-                    publisher="Europe PMC open-access full text"),
+                provenance=_prov(f"https://europepmc.org/article/PMC/{pmcid}",
+                                 SourceType.SELF_PUBLISHED_CORRESPONDENCE, plain[:300],
+                                 "Europe PMC open-access full text",
+                                 ("corresp", plain), ("email", em), ("affiliation", affil),
+                                 ("aff_xml", aff_text), ("lead_country", lead_country)),
                 why_this_person=why,
                 notes=[f"published in: {title}"]))
     return out
 
 
+def _author_for_email(email: str, authors: list[dict]) -> str:
+    """Which listed author does a published corresponding email belong to?
+
+    Attribution only: both the address and the author list are published in
+    the same article. The surname must appear in the address's local part,
+    and exactly one author may match — an ambiguous match names nobody.
+    """
+    local = re.sub(r"[^a-z]", "", email.split("@")[0].lower())
+    hits = []
+    for a in authors:
+        last = re.sub(r"[^a-z]", "", (a.get("lastName") or "").lower())
+        if len(last) >= 3 and last in local:
+            hits.append(f"{a.get('firstName', '')} {a.get('lastName', '')}".strip())
+    return hits[0] if len(hits) == 1 else ""
+
+
 def corresponding_authors_for_org(org: str, disease: str, why: str,
-                                  max_papers: int = 3) -> list[ContactRecord]:
+                                  max_papers: int = 3,
+                                  lead_country: str = "") -> list[ContactRecord]:
     """Find recent open-access papers from an organisation and take the
     corresponding author.
 
@@ -321,7 +380,7 @@ def corresponding_authors_for_org(org: str, disease: str, why: str,
         pmid = r.get("pmid")
         if not pmid:
             continue
-        got = contacts_from_publication(str(pmid), org, why)
+        got = contacts_from_publication(str(pmid), org, why, lead_country)
         out += [g for g in got if g.channel == "email"]
         if out:
             break          # one good corresponding author per org is enough
@@ -330,14 +389,21 @@ def corresponding_authors_for_org(org: str, disease: str, why: str,
 
 # --------------------------------------------------- source: trial registry
 
-def contacts_from_trial(nct: str, lead_org: str, why: str) -> list[ContactRecord]:
-    """Central contact published by the sponsor so people can enquire."""
+def contacts_from_trial(nct: str, lead_org: str, why: str,
+                        lead_country: str = "") -> list[ContactRecord]:
+    """Central contact published by the sponsor so people can enquire.
+
+    Registry contacts carry no address, so jurisdiction is read from what is
+    published alongside them: the email's country domain, the phone's country
+    code, the official's affiliation, then a single-country site footprint.
+    """
     out: list[ContactRecord] = []
     url = (f"https://clinicaltrials.gov/api/v2/studies/{nct}?"
            + urllib.parse.urlencode({
                "fields": "NCTId,BriefTitle,LeadSponsorName,CentralContactName,"
                          "CentralContactEMail,CentralContactPhone,CentralContactRole,"
-                         "OverallOfficialName,OverallOfficialAffiliation,LocationFacility"}))
+                         "OverallOfficialName,OverallOfficialAffiliation,"
+                         "LocationFacility,LocationCountry"}))
     d = _get(url)
     time.sleep(0.3)
     if not d:
@@ -346,10 +412,13 @@ def contacts_from_trial(nct: str, lead_org: str, why: str) -> list[ContactRecord
     cl = ps.get("contactsLocationsModule", {}) or {}
     title = (ps.get("identificationModule", {}) or {}).get("briefTitle", "")[:150]
     study_url = f"https://clinicaltrials.gov/study/{nct}"
+    codes = {orgs.country_code(l.get("country", "")) for l in cl.get("locations") or []} - {""}
+    footprint = next(iter(codes)) if len(codes) == 1 else ""
+    officials = cl.get("overallOfficials") or []
+    official_aff = officials[0].get("affiliation", "") if officials else ""
 
     for c in (cl.get("centralContacts") or [])[:3]:
         name = c.get("name") or "Study contact"
-        jur = _jurisdiction(lead_org)
         snippet = (f"Central contact listed on {nct}: {name}"
                    + (f", {c.get('role')}" if c.get("role") else "")
                    + ". Published by the sponsor for study enquiries.")
@@ -360,31 +429,27 @@ def contacts_from_trial(nct: str, lead_org: str, why: str) -> list[ContactRecord
                 org_display=lead_org, org_key="", person_name=name,
                 person_role=(c.get("role") or "study contact").title(),
                 channel=channel, value=val.strip(),
-                provenance=Provenance(
-                    source_url=study_url,
-                    source_type=SourceType.REGISTRY_PUBLISHED_CONTACT,
-                    lawful_basis=_basis_for(jur, SourceType.REGISTRY_PUBLISHED_CONTACT),
-                    retrieved_at=datetime.now(timezone.utc).isoformat(),
-                    verbatim_snippet=snippet, jurisdiction=jur,
-                    publisher="ClinicalTrials.gov"),
+                provenance=_prov(study_url, SourceType.REGISTRY_PUBLISHED_CONTACT,
+                                 snippet, "ClinicalTrials.gov",
+                                 ("email", c.get("email") or ""),
+                                 ("phone", c.get("phone") or ""),
+                                 ("official_affiliation", official_aff),
+                                 ("footprint", footprint),
+                                 ("lead_country", lead_country)),
                 why_this_person=why, notes=[f"study: {title}"]))
 
-    for o in (cl.get("overallOfficials") or [])[:2]:
+    for o in officials[:2]:
         if not o.get("name"):
             continue
         out.append(ContactRecord(
             org_display=lead_org, org_key="", person_name=o["name"],
             person_role="Principal investigator", channel="none", value=None,
-            provenance=Provenance(
-                source_url=study_url,
-                source_type=SourceType.REGISTRY_PUBLISHED_CONTACT,
-                lawful_basis=_basis_for(_jurisdiction(o.get("affiliation", "")),
-                                        SourceType.REGISTRY_PUBLISHED_CONTACT),
-                retrieved_at=datetime.now(timezone.utc).isoformat(),
-                verbatim_snippet=f"Overall official for {nct}: {o['name']}"
-                                 + (f", {o.get('affiliation','')}" if o.get("affiliation") else ""),
-                jurisdiction=_jurisdiction(o.get("affiliation", "")),
-                publisher="ClinicalTrials.gov"),
+            provenance=_prov(study_url, SourceType.REGISTRY_PUBLISHED_CONTACT,
+                             f"Overall official for {nct}: {o['name']}"
+                             + (f", {o.get('affiliation','')}" if o.get("affiliation") else ""),
+                             "ClinicalTrials.gov",
+                             ("official_affiliation", o.get("affiliation", "")),
+                             ("footprint", footprint), ("lead_country", lead_country)),
             why_this_person=why,
             notes=["name published; no direct email published — route via the "
                    "study's central contact"]))
@@ -393,18 +458,15 @@ def contacts_from_trial(nct: str, lead_org: str, why: str) -> list[ContactRecord
 
 # ------------------------------------------------------- source: NIH grants
 
-def contact_from_grant(person: str, org: str, url: str, why: str) -> ContactRecord:
+def contact_from_grant(person: str, org: str, url: str, why: str,
+                       org_country: str = "US") -> ContactRecord:
     """PI named under public-funding transparency. Name only; no email."""
     return ContactRecord(
         org_display=org, org_key="", person_name=person,
         person_role="Principal investigator", channel="none", value=None,
-        provenance=Provenance(
-            source_url=url or "https://reporter.nih.gov/",
-            source_type=SourceType.STATUTORY_REGISTER,
-            lawful_basis=Basis.STATUTORY,
-            retrieved_at=datetime.now(timezone.utc).isoformat(),
-            verbatim_snippet=f"Principal investigator of record: {person}, {org}",
-            jurisdiction="US", publisher="NIH RePORTER"),
+        provenance=_prov(url or "https://reporter.nih.gov/", SourceType.STATUTORY_REGISTER,
+                         f"Principal investigator of record: {person}, {org}",
+                         "NIH RePORTER", ("lead_country", org_country or "US")),
         why_this_person=why,
         notes=["RePORTER publishes the name, not an email address; reach via the "
                "institution's published research-office address"])
@@ -576,6 +638,79 @@ def export_csv(recs: list[ContactRecord], path: Path,
     return len(ok), excluded
 
 
+# ------------------------------------------------------------------ resolve
+
+def suppressed(r: ContactRecord, suppression: set[str]) -> bool:
+    ident = (r.value or "").lower()
+    return bool(suppression) and (ident in suppression
+                                  or r.person_name.lower() in suppression)
+
+
+def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
+            log: Progress | None = None) -> list[ContactRecord]:
+    """Resolve lawful contacts for the top N leads of a DIA leads document."""
+    log = log or (lambda m: print(f"  {m}", file=sys.stderr))
+    suppression = suppression or set()
+    leads = doc.get("leads", [])[:top]
+    disease = doc.get("disease", "")
+    recs: list[ContactRecord] = []
+
+    for i, lead in enumerate(leads, 1):
+        org = lead.get("org_display", "")
+        key = lead.get("org_key", "")
+        country = lead.get("country", "")
+        why = "; ".join(lead.get("rationale", [])[:2]) or "surfaced by DIA"
+        log(f"[{i}/{len(leads)}] {org[:52]}")
+
+        found: list[ContactRecord] = []
+        for s in lead.get("signals", [])[:6]:
+            src = s.get("source")
+            if src == "publications":
+                m = re.search(r"/MED/(\d+)", s.get("url", ""))
+                if m:
+                    found += contacts_from_publication(m.group(1), org, why, country)
+            elif src == "trials":
+                nct = (s.get("extra", {}) or {}).get("nct")
+                if nct:
+                    found += contacts_from_trial(nct, org, why, country)
+            elif src == "grants" and s.get("person"):
+                found.append(contact_from_grant(s["person"], org, s.get("url", ""), why,
+                                                s.get("country") or "US"))
+
+        # No published email from the lead's own signals: look for a
+        # corresponding author at the same organisation on the same disease.
+        if not any(f.channel == "email" for f in found) and disease:
+            found += corresponding_authors_for_org(org, disease, why, lead_country=country)
+
+        for r in found:
+            r.org_key = key
+            if suppressed(r, suppression):
+                r.suppressed = True
+                r.notes.append("on the do-not-contact list")
+        recs += found
+
+    # Dedupe. A published value identifies the record on its own, so registry
+    # typos of one person's name ("Cliford"/"Clifford") collapse; name-only
+    # records dedupe on the name.
+    seen: set[tuple] = set()
+    uniq: list[ContactRecord] = []
+    for r in recs:
+        k = ((r.org_key, r.channel, r.value.lower()) if r.value
+             else (r.org_key, r.person_name.lower(), r.channel))
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(r)
+    return uniq
+
+
+def to_json(recs: list[ContactRecord], disease: str) -> dict:
+    return {"disease": disease, "version": VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "contacts": [{**asdict(r), "exportable": r.exportable,
+                          "gate_reason": r.gate_reason} for r in recs]}
+
+
 # ---------------------------------------------------------------------- main
 
 def main(argv=None) -> int:
@@ -588,68 +723,18 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     data = json.loads(a.leads.read_text(encoding="utf-8"))
-    leads = data.get("leads", [])[: a.top]
     disease = data.get("disease", "")
     suppression = load_suppression(a.suppress)
-    print(f"PCIA v{VERSION} — resolving contacts for {len(leads)} leads "
+    print(f"PCIA v{VERSION} — resolving contacts for top {a.top} leads "
           f"({len(suppression)} suppressed)\n", file=sys.stderr)
-
-    recs: list[ContactRecord] = []
-    leads_by_key: dict[str, dict] = {}
-
-    for i, lead in enumerate(leads, 1):
-        org = lead.get("org_display", "")
-        key = lead.get("org_key", "")
-        leads_by_key[key] = lead
-        why = "; ".join(lead.get("rationale", [])[:2]) or "surfaced by DIA"
-        print(f"  [{i}/{len(leads)}] {org[:52]}", file=sys.stderr)
-
-        found: list[ContactRecord] = []
-        for s in lead.get("signals", [])[:6]:
-            src = s.get("source")
-            if src == "publications":
-                m = re.search(r"/MED/(\d+)", s.get("url", ""))
-                if m:
-                    found += contacts_from_publication(m.group(1), org, why)
-            elif src == "trials":
-                nct = (s.get("extra", {}) or {}).get("nct")
-                if nct:
-                    found += contacts_from_trial(nct, org, why)
-            elif src == "grants" and s.get("person"):
-                found.append(contact_from_grant(s["person"], org, s.get("url", ""), why))
-
-        # No published email from the lead's own signals: look for a
-        # corresponding author at the same organisation on the same disease.
-        if not any(f.channel == "email" for f in found) and disease:
-            found += corresponding_authors_for_org(org, disease, why)
-
-        for r in found:
-            r.org_key = key
-            ident = (r.value or r.person_name or "").lower()
-            if ident in suppression or r.person_name.lower() in suppression:
-                r.suppressed = True
-                r.notes.append("on the do-not-contact list")
-        recs += found
-
-    # Dedupe on (org, person, channel, value).
-    seen: set[tuple] = set()
-    uniq: list[ContactRecord] = []
-    for r in recs:
-        k = (r.org_key, r.person_name.lower(), r.channel, (r.value or "").lower())
-        if k in seen:
-            continue
-        seen.add(k)
-        uniq.append(r)
+    uniq = resolve(data, a.top, suppression)
+    leads_by_key = {l.get("org_key", ""): l for l in data.get("leads", [])}
 
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "contacts.html").write_text(
         render(uniq, leads_by_key, disease), encoding="utf-8")
-    (a.out / "contacts.json").write_text(json.dumps(
-        {"disease": disease, "version": VERSION,
-         "generated_at": datetime.now(timezone.utc).isoformat(),
-         "contacts": [{**asdict(r), "exportable": r.exportable,
-                       "gate_reason": r.gate_reason} for r in uniq]},
-        indent=2, default=str), encoding="utf-8")
+    (a.out / "contacts.json").write_text(
+        json.dumps(to_json(uniq, disease), indent=2, default=str), encoding="utf-8")
     n, excluded = export_csv(uniq, a.out / "contactable.csv")
 
     ok = [r for r in uniq if r.exportable]
@@ -661,6 +746,10 @@ def main(argv=None) -> int:
         by[r.provenance.source_type] += 1
     for k, v in by.items():
         print(f"    {v:>3}  {k}", file=sys.stderr)
+    jur = defaultdict(int)
+    for r in ok:
+        jur[r.provenance.jurisdiction] += 1
+    print(f"  jurisdiction: {dict(jur)}", file=sys.stderr)
     if excluded:
         print(f"  {len(excluded)} record(s) excluded from the CSV by the lawful-basis "
               f"gate — see contacts.html for each reason", file=sys.stderr)
@@ -668,7 +757,8 @@ def main(argv=None) -> int:
     print(f"  report:      {a.out/'contacts.html'}", file=sys.stderr)
     for r in ok[:6]:
         print(f"    {r.person_name[:26]:<28}{(r.value or '')[:34]:<36}"
-              f"{r.provenance.source_type[:28]}", file=sys.stderr)
+              f"{r.provenance.jurisdiction:<8}{r.provenance.source_type[:28]}",
+              file=sys.stderr)
     return 0
 
 
