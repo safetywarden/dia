@@ -37,6 +37,9 @@ ABBREV = [
     (r"\bhosp\b\.?", "hospital"), (r"\bmed\b\.?", "medical"),
     (r"\bnatl\b\.?", "national"), (r"\bsch\b\.?", "school"),
     (r"&", " and "), (r"\bst\b\.?", "saint"),
+    (r"\bcoll\b\.?", "college"), (r"\btx\b", "texas"), (r"\bcan\b(?= (center|ctr))", "cancer"),
+    (r"\bres\b\.?", "research"), (r"\bhlth\b", "health"), (r"\bchildrens\b", "children s"),
+    (r"\bmem\b\.?", "memorial"),
 ]
 LEGAL = re.compile(r"\b(inc|ltd|llc|plc|gmbh|corp|corporation|co|ag|s\.?a|"
                    r"limited|pvt|private|l\.?p)\b\.?", re.I)
@@ -76,7 +79,7 @@ TIER1 = re.compile(r"^(universit\w*|univ|hospital\w*|hosp|institut\w*|istituto|i
                    r"pharmaceuticals?|therapeutics|biosciences?|biotech\w*|"
                    r"laboratories)$", re.I)
 TIER2 = re.compile(r"^(cent(er|re)|ctr|centro|foundation|fondazione|college|academy|"
-                   r"council|charit[eé]|onlus)$", re.I)
+                   r"council|charit[eé]|onlus|school)$", re.I)
 SUBUNIT_WORD = re.compile(r"^(department|dept|division|div|section|unit|laboratory|lab|"
                           r"program(me)?|service|group|faculty|school|chair|core|"
                           r"office|branch|and|&)$", re.I)
@@ -173,17 +176,23 @@ def institution_from_affiliation(affil: str) -> str:
                 break
     if best:
         return best[1]
-    # No head noun anywhere. Take a segment only if it is not a field of study
-    # ("Hemostaseology and Medical Oncology"); otherwise report nothing rather
-    # than invent an organisation.
-    for s in segs:
-        words = s.split()
-        if (not SUBUNIT.match(s) and not GENERIC.match(s) and len(words) >= 2
-                and not ORDINAL.match(s) and country_code(s) == ""
-                and not any(FIELD_WORD.match(w) for w in words)
-                and not re.search(r"(ology|ics|ery)$", words[-1], re.I)):
-            return s
+    # No head noun anywhere. Guessing from the remaining segments turned cities
+    # ("New Haven") and fields of study into organisations, so report nothing:
+    # a missed lead costs less than an invented one.
     return ""
+
+
+def looks_like_person(name: str) -> bool:
+    """ClinicalTrials.gov lets an investigator be the sponsor ("Paul Szabolcs")."""
+    n = re.sub(r",?\s+(MD|M\.D\.|PhD|Ph\.D\.|DO|MBBS|MPH|FRCP\w*)\.?$", "", (name or "").strip())
+    words = n.split()
+    if not 2 <= len(words) <= 4 or re.search(r"\d", n):
+        return False
+    if INSTITUTION.search(n) or KNOWN_INDUSTRY.search(n) or re.search(
+            r"\b(group|network|consortium|society|association|alliance|trust|agency|"
+            r"organi[sz]ation|cooperative|registry|program|initiative|study)\b", n, re.I):
+        return False
+    return all(re.fullmatch(r"[A-Z][a-zA-Z'\-]+|[A-Z]\.?", w) for w in words)
 
 
 NIH_INTRAMURAL = {"NCI": "National Cancer Institute", "NHLBI": "National Heart, Lung, and "
@@ -217,19 +226,58 @@ def org_key(name: str) -> str:
     k = re.sub(r"\s+", " ", k).strip()
     # Registry-specific tails that name the same organisation.
     k = re.sub(r"\s+(research and development|r and d|r d|research development)$", "", k)
-    return k
+    k = re.sub(r"\s+the$", "", k)
+    return ALIASES.get(k, k)
+
+
+# Same organisation, different registry conventions.
+ALIASES = {
+    "university of texas md anderson cancer center": "md anderson cancer center",
+    "ut md anderson cancer center": "md anderson cancer center",
+    "university of texas m d anderson cancer center": "md anderson cancer center",
+    "sloan kettering institute for cancer research": "memorial sloan kettering cancer center",
+    "memorial sloan kettering": "memorial sloan kettering cancer center",
+    "mayo clinic rochester": "mayo clinic",
+    "mayo clinic arizona": "mayo clinic",
+    "mayo clinic jacksonville": "mayo clinic",
+    "general hospital corporation": "massachusetts general hospital",
+    "janssen": "janssen research and development",
+    "hoffmann la roche": "roche",
+}
+
+
+# NIH RePORTER's house abbreviations ("UNIV OF TX MD ANDERSON CAN CTR").
+NIH_ABBREV = {"UNIV": "University", "CTR": "Center", "CNTR": "Center", "HOSP": "Hospital",
+              "MED": "Medical", "COLL": "College", "INST": "Institute", "TX": "Texas",
+              "CAN": "Cancer", "RES": "Research", "HLTH": "Health", "SCI": "Science",
+              "SCIS": "Sciences", "CHILDRENS": "Children's", "NATL": "National",
+              "FDN": "Foundation", "BIOMED": "Biomedical", "CLIN": "Clinical",
+              "SCH": "School", "ST": "State", "CO": "Company", "CORP": "Corporation",
+              "ASSOC": "Association", "DEPT": "Department", "MEM": "Memorial"}
+KEEP_UPPER = {"MD", "NY", "UCLA", "UCSF", "MIT", "NIH", "NCI", "USA", "LLC", "II", "III"}
 
 
 def display_name(name: str) -> str:
-    """Registries shout (NIH: 'MASSACHUSETTS GENERAL HOSPITAL'). Tidy the case."""
+    """Registries shout (NIH: 'MASSACHUSETTS GENERAL HOSPITAL'). Tidy the case
+    and expand NIH's abbreviations so the name reads as the organisation."""
     n = (name or "").strip()
+    n = re.sub(r",\s*(the|THE)$", "", n)                 # "SCRIPPS RESEARCH INSTITUTE, THE"
     if n.isupper() and len(n) > 4:
         small = {"of", "and", "the", "for", "at", "in", "de", "la"}
-        words = [w.lower() if w.lower() in small else
-                 "-".join(p.capitalize() for p in w.split("-")) for w in n.split()]
-        if words:
-            words[0] = words[0].capitalize()
-        n = " ".join(words)
+        out = []
+        for w in n.split():
+            core = w.strip(",.")
+            if core in NIH_ABBREV:
+                out.append(w.replace(core, NIH_ABBREV[core]))
+            elif core in KEEP_UPPER:
+                out.append(w)
+            elif w.lower() in small:
+                out.append(w.lower())
+            else:
+                out.append("-".join(p.capitalize() for p in w.split("-")).replace("/", "/"))
+        if out:
+            out[0] = out[0][:1].upper() + out[0][1:]
+        n = " ".join(out)
     return n
 
 

@@ -33,6 +33,52 @@ def test_institution(affil, expected):
     assert inst(affil) == expected
 
 
+def test_no_fallback_to_cities_or_fields():
+    assert inst("Department of Internal Medicine, Yale School of Medicine, New Haven, CT") \
+        == "Yale School of Medicine"
+    assert inst("Section of Hematology, New Haven, CT, USA") == ""
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("Paul Szabolcs", True), ("Jane Q. Smith, MD", True), ("Sanofi", False),
+    ("Mayo Clinic", False), ("European Myeloma Network", False), ("Azafaros B.V.", False),
+])
+def test_looks_like_person(name, expected):
+    from atlas.orgs import looks_like_person
+    assert looks_like_person(name) is expected
+
+
+@pytest.mark.parametrize("raw,shown", [
+    ("UNIV OF TX MD ANDERSON CAN CTR", "University of Texas MD Anderson Cancer Center"),
+    ("CINCINNATI CHILDRENS HOSP MED CTR", "Cincinnati Children's Hospital Medical Center"),
+    ("SCRIPPS RESEARCH INSTITUTE, THE", "Scripps Research Institute"),
+])
+def test_nih_display(raw, shown):
+    from atlas.orgs import display_name
+    assert display_name(raw) == shown
+
+
+def test_md_anderson_merges_across_registries():
+    assert org_key("UNIV OF TX MD ANDERSON CAN CTR") == org_key("M.D. Anderson Cancer Center")
+
+
+def test_grant_relevance():
+    from atlas.dia import grant_is_about
+    assert grant_is_about("Gaucher disease", "Gene therapy for Gaucher disease type 1", "")
+    assert not grant_is_about("Gaucher disease", "Lipids in diabetic kidney disease",
+                              "... as seen in Gaucher ... lipid storage ...")
+
+
+def test_need_detection_requires_a_gap_for_method_phrases():
+    from atlas.dia import detect_needs
+    assert "real_world_data" not in detect_needs(
+        "We evaluated lyso-Gb1 using real-world data from the Gaucher Outcome Survey.")
+    assert "real_world_data" in detect_needs(
+        "There is limited long-term real-world data on taliglucerase alfa.")
+    assert "longitudinal_gap" not in detect_needs(
+        "This correlated with longer follow-up duration (p = 0.001).")
+
+
 def test_nih_intramural_maps_to_parent():
     from atlas.orgs import registry_org_name
     assert registry_org_name("Division of Basic Sciences - NCI") == "National Cancer Institute"

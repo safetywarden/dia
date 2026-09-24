@@ -85,8 +85,8 @@ NEEDS: dict[str, tuple[str, float, list[str]]] = {
         [r"real[- ]world (data|evidence|setting|population|cohort)", r"routine clinical practice"]),
     "longitudinal_gap": (
         "longer longitudinal follow-up", 0.35,
-        [r"(short|limited) follow-?up", r"longer follow-?up", r"long-?term (follow-?up|outcome)s? "
-         r"(are|is|remain\w*) (needed|required|unknown|lacking)", r"longitudinal (data|studies)"]),
+        [r"(short|limited) follow-?up", r"longer follow-?up(?! (duration|time|period))",
+         r"long-?term (follow-?up|outcome|data)s?", r"longitudinal (data|studies)"]),
     "retrospective_only": (
         "prospective or richer data than a retrospective review", 0.25,
         [r"retrospective (nature|design|study|analysis)"]),
@@ -104,14 +104,27 @@ LIMITATION_QUERY = (
 
 SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
 
+# These phrases also appear in methods and results ("using real-world data from
+# the registry", "correlated with longer follow-up duration"), where they mean
+# the authors HAVE the data. Count them only in a sentence that frames a gap.
+NEEDS_CUE = {"real_world_data", "longitudinal_gap", "generalisability", "external_validation"}
+GAP_CUE = re.compile(
+    r"\b(limit\w*|lack\w*|scarce|scarcity|insufficient|paucity|few|only|small|restricted|"
+    r"needed|need|required|warrant\w*|should be|future|further|remain\w*|unknown|unclear|"
+    r"underexplored|under-explored|not (been |yet )?(well )?(studied|established|known|"
+    r"validated)|however|although|constrain\w*|caution|compromis\w*|hinder\w*|gap)\b", re.I)
+
 
 def detect_needs(text: str) -> dict[str, str]:
     """Return {need_code: verbatim sentence} for every stated gap in text."""
     out: dict[str, str] = {}
     for sent in SENT.split(text or ""):
         low = sent.lower()
+        cued = bool(GAP_CUE.search(low))
         for code, (_, _, pats) in NEEDS.items():
             if code in out or not pats:
+                continue
+            if code in NEEDS_CUE and not cued:
                 continue
             if any(re.search(p, low) for p in pats):
                 out[code] = sent.strip()[:400]
@@ -190,10 +203,28 @@ def harvest_publications(disease: str, years: int, limit: int, log: Progress) ->
     return out[:limit]
 
 
+def disease_core(disease: str) -> str:
+    """'Gaucher disease' -> 'gaucher'; 'multiple myeloma' stays whole."""
+    core = re.sub(r"\s+(disease|syndrome|disorder)s?$", "", disease.strip(), flags=re.I)
+    return core.lower()
+
+
+def grant_is_about(disease: str, title: str, abstract: str) -> bool:
+    """RePORTER's text search also matches a project's keyword terms, which
+    pulls in work that merely cites the disease (a kidney-disease grant that
+    mentions Gaucher lipids). Keep a grant only if the disease is in its
+    title or recurs in its abstract."""
+    core = disease_core(disease)
+    return core in (title or "").lower() or (abstract or "").lower().count(core) >= 2
+
+
 def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
     out: list[Signal] = []
     offset = 0
-    while len(out) < limit:
+    dropped = 0
+    for _page in range(6):
+        if len(out) >= limit:
+            break
         d = get(REPORTER, data={
             "criteria": {
                 "advanced_text_search": {"operator": "and",
@@ -217,6 +248,9 @@ def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
             name = orgs.registry_org_name(org.get("org_name") or "")
             if not name:
                 continue
+            if not grant_is_about(disease, r.get("project_title", ""), r.get("abstract_text", "")):
+                dropped += 1
+                continue
             pi = r.get("contact_pi_name") or ""
             if "," in pi:                              # "OTT, CHRISTOPHER J"
                 last, _, rest = pi.partition(",")
@@ -239,7 +273,8 @@ def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
         offset += len(res)
         if offset >= ((d or {}).get("meta") or {}).get("total", 0):
             break
-    log(f"grants: {len(out)} active NIH projects")
+    log(f"grants: {len(out)} active NIH projects ({dropped} dropped as only "
+        f"incidentally mentioning {disease})")
     return out[:limit]
 
 
@@ -280,6 +315,15 @@ def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
             enrol = (design.get("enrollmentInfo") or {}).get("count")
             officials = cl.get("overallOfficials") or []
             person = officials[0].get("name", "") if officials else ""
+            sponsor = spons.get("name", "")
+            if orgs.looks_like_person(sponsor):
+                # Investigator-sponsored: the organisation is where they work.
+                aff = officials[0].get("affiliation", "") if officials else ""
+                sponsor = orgs.institution_from_affiliation(aff) or (
+                    aff if aff and not orgs.looks_like_person(aff) else "")
+                person = person or spons.get("name", "")
+                if not sponsor:
+                    continue
             needs = {}
             if codes and "IN" not in codes:
                 needs["geographic_gap"] = f"{nct} has no sites in India"
@@ -289,7 +333,7 @@ def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
             # the best public evidence of home jurisdiction.
             home = next(iter(codes)) if len(codes) == 1 else ""
             out.append(Signal(
-                source="trials", org_raw=spons.get("name", ""),
+                source="trials", org_raw=sponsor,
                 date=(status.get("startDateStruct") or {}).get("date", ""),
                 title=ident.get("briefTitle", ""),
                 url=f"https://clinicaltrials.gov/study/{nct}",

@@ -10,3 +10,6 @@ out_*/
 node_modules/
 .next/
 .vercel/
+*.log
+next-env.d.ts
+*.tsbuildinfo
