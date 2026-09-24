@@ -8,6 +8,12 @@ const DIM_LABEL: Record<string, string> = {
   signal_convergence: "Convergence", stated_need_fit: "Stated need", budget_signal: "Budget",
   recency: "Recency", geographic_opening: "No India sites", reachability: "Named people",
 };
+const BASIS_LABEL: Record<string, string> = {
+  DPDP_3C_II_PUBLIC: "Made public by the person for contact (DPDP §3(c)(ii) standard)",
+  GDPR_LEGITIMATE_INTEREST: "Legitimate interest (GDPR Art. 6(1)(f))",
+  STATUTORY_PUBLICATION: "Published under a legal obligation",
+  CONSENT: "Consent",
+};
 const NEED_LABEL: Record<string, string> = {
   diverse_population: "Needs under-represented population data",
   external_validation: "Needs an external validation cohort",
@@ -257,7 +263,7 @@ function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contac
                   <details><summary>Published text</summary><q>{c.provenance.verbatim_snippet}</q></details>
                 </td>
                 <td className="small">
-                  {c.provenance.lawful_basis.replaceAll("_", " ")}
+                  <span title={c.provenance.lawful_basis}>{BASIS_LABEL[c.provenance.lawful_basis] ?? c.provenance.lawful_basis}</span>
                   <div className="muted">{c.provenance.jurisdiction}{c.provenance.country && ` (${c.provenance.country}`}
                     {c.provenance.jurisdiction_source && `, from ${c.provenance.jurisdiction_source}`}{c.provenance.country && ")"}</div>
                 </td>

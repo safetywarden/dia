@@ -58,6 +58,16 @@ def test_nih_display(raw, shown):
     assert display_name(raw) == shown
 
 
+@pytest.mark.parametrize("school,parent,same", [
+    ("Yale School of Medicine", "Yale University", True),
+    ("Stanford University School of Medicine", "Stanford University", True),
+    ("Harvard Medical School", "Harvard University", True),
+    ("Baylor College of Medicine", "Baylor University", False),
+])
+def test_medical_school_folds_into_parent_only_when_unambiguous(school, parent, same):
+    assert (org_key(school) == org_key(parent)) is same
+
+
 def test_md_anderson_merges_across_registries():
     assert org_key("UNIV OF TX MD ANDERSON CAN CTR") == org_key("M.D. Anderson Cancer Center")
 

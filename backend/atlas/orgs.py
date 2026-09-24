@@ -227,7 +227,21 @@ def org_key(name: str) -> str:
     # Registry-specific tails that name the same organisation.
     k = re.sub(r"\s+(research and development|r and d|r d|research development)$", "", k)
     k = re.sub(r"\s+the$", "", k)
+    # A university's medical school is the university for outreach purposes
+    # ("Stanford University School of Medicine"). Only fold when the parent is
+    # explicit or known: Baylor College of Medicine is not Baylor University.
+    m = re.match(r"^(.*?)\s+(school of medicine|medical school|college of medicine|"
+                 r"faculty of medicine|school of public health|medical center)$", k)
+    if m and ("university" in m.group(1) or m.group(1) in UNIVERSITY_SCHOOLS):
+        k = UNIVERSITY_SCHOOLS.get(m.group(1), m.group(1))
     return ALIASES.get(k, k)
+
+
+UNIVERSITY_SCHOOLS = {"yale": "yale university", "harvard": "harvard university",
+                      "stanford": "stanford university", "duke": "duke university",
+                      "emory": "emory university", "vanderbilt": "vanderbilt university",
+                      "johns hopkins": "johns hopkins university",
+                      "northwestern": "northwestern university"}
 
 
 # Same organisation, different registry conventions.
