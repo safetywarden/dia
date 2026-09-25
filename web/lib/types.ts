@@ -41,7 +41,7 @@ export type Watch = {
 };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/atlas/${path}`, { cache: "no-store", ...init,
+  const res = await fetch(`/api/dia/${path}`, { cache: "no-store", ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
   if (res.status === 401) { window.location.href = "/login"; throw new Error("signed out"); }
   if (!res.ok) {

@@ -10,7 +10,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
 def _url() -> str:
-    url = os.environ.get("DATABASE_URL", "sqlite:///./atlas.db")
+    url = os.environ.get("DATABASE_URL", "sqlite:///./bconz_dia.db")
     # Railway hands out postgres://; SQLAlchemy wants an explicit driver.
     if url.startswith("postgres://"):
         url = "postgresql+psycopg://" + url[len("postgres://"):]

@@ -216,7 +216,7 @@ function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contac
   async function exportCsv() {
     setBusy(true); setMsg("");
     try {
-      const res = await fetch(`/api/atlas/runs/${runId}/contacts.csv`, { cache: "no-store" });
+      const res = await fetch(`/api/dia/runs/${runId}/contacts.csv`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Export failed (${res.status})`);
       const blob = await res.blob();
       const a = document.createElement("a");

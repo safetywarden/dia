@@ -8,13 +8,13 @@ async function forward(req: NextRequest, ctx: { params: Promise<{ path: string[]
   if (!user) return Response.json({ detail: "not signed in" }, { status: 401 });
 
   const { path } = await ctx.params;
-  const base = (process.env.ATLAS_API_URL ?? "").trim().replace(/\/$/, "");
+  const base = (process.env.DIA_API_URL ?? "").trim().replace(/\/$/, "");
   const url = `${base}/${path.map(encodeURIComponent).join("/")}${req.nextUrl.search}`;
   const init: RequestInit = {
     method: req.method,
     headers: {
-      Authorization: `Bearer ${(process.env.ATLAS_API_TOKEN ?? "").trim()}`,
-      "X-Atlas-User": user,
+      Authorization: `Bearer ${(process.env.DIA_API_TOKEN ?? "").trim()}`,
+      "X-DIA-User": user,
       "Content-Type": req.headers.get("content-type") ?? "application/json",
     },
     cache: "no-store",

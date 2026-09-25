@@ -3,7 +3,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-const COOKIE = "atlas_session";
+const COOKIE = "bconz_dia_session";
 const MAX_AGE = 60 * 60 * 12; // 12 hours
 
 function secret() {
@@ -13,7 +13,7 @@ function secret() {
 }
 
 export function allowedEmails(): string[] {
-  return (process.env.ATLAS_ALLOWED_EMAILS ?? "")
+  return (process.env.DIA_ALLOWED_EMAILS ?? "")
     .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
 }
 
@@ -34,12 +34,12 @@ export async function destroySession() {
 }
 
 /** The signed-in email, or null. Re-checks the allowlist so removing someone
- *  from ATLAS_ALLOWED_EMAILS takes effect without waiting for expiry. */
+ *  from DIA_ALLOWED_EMAILS takes effect without waiting for expiry. */
 export async function currentUser(): Promise<string | null> {
   // Local development only: `next build` always sets NODE_ENV=production, so
   // this can never be active in a deployed build.
-  if (process.env.NODE_ENV === "development" && process.env.ATLAS_DEV_USER) {
-    return process.env.ATLAS_DEV_USER.toLowerCase();
+  if (process.env.NODE_ENV === "development" && process.env.DIA_DEV_USER) {
+    return process.env.DIA_DEV_USER.toLowerCase();
   }
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;

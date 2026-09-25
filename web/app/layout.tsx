@@ -5,7 +5,7 @@ import { signOut } from "./login/actions";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Atlas Demand",
+  title: "BConz DIA",
   description: "Organisations that have publicly stated a data need, and the lawful way to reach them.",
   robots: { index: false, follow: false },
 };
@@ -17,7 +17,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         {user && (
           <header className="top">
-            <Link href="/" className="brand">Atlas <span>Demand</span></Link>
+            <Link href="/" className="brand">BConz <span>DIA</span></Link>
             <nav>
               <Link href="/">Searches</Link>
               <Link href="/suppression">Do-not-contact</Link>

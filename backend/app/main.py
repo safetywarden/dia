@@ -1,8 +1,8 @@
-"""Atlas demand API: runs DIA -> PCIA and serves leads, contacts and gated export.
+"""BConz DIA API: runs DIA -> PCIA and serves leads, contacts and gated export.
 
-Every route except /health requires `Authorization: Bearer $ATLAS_API_TOKEN`.
+Every route except /health requires `Authorization: Bearer $DIA_API_TOKEN`.
 The web app holds that token server-side and forwards the signed-in user's
-identity in `X-Atlas-User`, which is recorded on runs, exports and
+identity in `X-DIA-User`, which is recorded on runs, exports and
 suppressions for the audit trail.
 """
 from __future__ import annotations
@@ -20,19 +20,19 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 
-from atlas import dia, pcia
+from bconz import dia, pcia
 
 from . import db, worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-TOKEN = os.environ.get("ATLAS_API_TOKEN", "").strip()
-RUN_WORKER = os.environ.get("ATLAS_RUN_WORKER", "1") == "1"
+TOKEN = os.environ.get("DIA_API_TOKEN", "").strip()
+RUN_WORKER = os.environ.get("DIA_RUN_WORKER", "1") == "1"
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if not TOKEN:
-        logging.warning("ATLAS_API_TOKEN is not set — every authenticated route will refuse")
+        logging.warning("DIA_API_TOKEN is not set — every authenticated route will refuse")
     db.init()
     stop = None
     if RUN_WORKER:
@@ -43,18 +43,18 @@ async def lifespan(_: FastAPI):
         stop.set()
 
 
-app = FastAPI(title="Atlas Demand API", version=dia.VERSION, lifespan=lifespan)
+app = FastAPI(title="BConz DIA API", version=dia.VERSION, lifespan=lifespan)
 app.add_middleware(CORSMiddleware,
-                   allow_origins=[o for o in os.environ.get("ATLAS_CORS", "").split(",") if o],
+                   allow_origins=[o for o in os.environ.get("DIA_CORS", "").split(",") if o],
                    allow_methods=["*"], allow_headers=["*"])
 
 
 def user(authorization: str = Header(default=""),
-         x_atlas_user: str = Header(default="")) -> str:
+         x_dia_user: str = Header(default="")) -> str:
     supplied = authorization.removeprefix("Bearer ").strip()
     if not TOKEN or not hmac.compare_digest(supplied, TOKEN):
         raise HTTPException(401, "invalid or missing API token")
-    return x_atlas_user or "api"
+    return x_dia_user or "api"
 
 
 # ------------------------------------------------------------------ schemas

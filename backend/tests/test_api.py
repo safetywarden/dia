@@ -4,7 +4,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from atlas.pcia import Basis, ContactRecord, Provenance, SourceType
+from bconz.pcia import Basis, ContactRecord, Provenance, SourceType
 
 
 def _contact(value, st=SourceType.SELF_PUBLISHED_CORRESPONDENCE, basis=Basis.DPDP_3C_II):
@@ -31,8 +31,8 @@ FAKE_DOC = {
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path/'t.db'}")
-    monkeypatch.setenv("ATLAS_API_TOKEN", "secret")
-    monkeypatch.setenv("ATLAS_RUN_WORKER", "0")
+    monkeypatch.setenv("DIA_API_TOKEN", "secret")
+    monkeypatch.setenv("DIA_RUN_WORKER", "0")
     from app import db, worker, main
     importlib.reload(db); importlib.reload(worker); importlib.reload(main)
     monkeypatch.setattr(worker.dia, "run", lambda *a, **k: FAKE_DOC)

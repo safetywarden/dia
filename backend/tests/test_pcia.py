@@ -1,6 +1,6 @@
 import pytest
 
-from atlas.pcia import (Basis, ContactRecord, ExportGateError, Provenance, SourceType,
+from bconz.pcia import (Basis, ContactRecord, ExportGateError, Provenance, SourceType,
                         assert_exportable, export_csv, resolve_jurisdiction)
 
 

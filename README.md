@@ -1,4 +1,4 @@
-# Atlas Demand — DIA + PCIA
+# BConz DIA — DIA + PCIA
 
 Finds organisations that have **publicly stated they need data** in a disease, ranks them, and
 resolves **contacts that were published to be contacted**, each with its source URL and lawful basis.
@@ -14,7 +14,7 @@ disease ──► DIA (Demand Intelligence Agent) ──► ranked leads + verba
 
 | Part | Where | What |
 |---|---|---|
-| `backend/atlas/` | library + CLI | `dia.py`, `pcia.py`, `orgs.py` (organisation identity) |
+| `backend/bconz/` | library + CLI | `dia.py`, `pcia.py`, `orgs.py` (organisation identity) |
 | `backend/app/` | Railway | FastAPI, Postgres, background worker, watch scheduler |
 | `web/` | Vercel | Next.js app: searches, lead cards, contacts, gated export, do-not-contact |
 
@@ -41,35 +41,35 @@ disease ──► DIA (Demand Intelligence Agent) ──► ranked leads + verba
 
 ```bash
 cd backend && pip install -r requirements.txt
-python -m atlas.dia --disease "multiple myeloma" --out ../out_mm
-python -m atlas.pcia --leads ../out_mm/leads.json --out ../out_mm --top 20
+python -m bconz.dia --disease "multiple myeloma" --out ../out_mm
+python -m bconz.pcia --leads ../out_mm/leads.json --out ../out_mm --top 20
 ```
 
 API + web:
 
 ```bash
-cd backend && ATLAS_API_TOKEN=dev-token uvicorn app.main:app --port 8077
+cd backend && DIA_API_TOKEN=dev-token uvicorn app.main:app --port 8077
 cd web && cp .env.example .env.local && npm install && npm run dev
 ```
 
-In development only, `ATLAS_DEV_USER=<email>` in `web/.env.local` skips sign-in.
+In development only, `DIA_DEV_USER=<email>` in `web/.env.local` skips sign-in.
 
 Tests: `cd backend && python -m pytest -q tests`
 
 ## Deploy
 
 **Railway (API)** — service root `backend/`, add a Postgres plugin. Variables:
-`DATABASE_URL` (from the plugin), `ATLAS_API_TOKEN` (random, 32+ chars),
-`ATLAS_CORS` (optional). Start command and health check are in `backend/railway.json`.
+`DATABASE_URL` (from the plugin), `DIA_API_TOKEN` (random, 32+ chars),
+`DIA_CORS` (optional). Start command and health check are in `backend/railway.json`.
 Keep one replica: the worker and scheduler run in-process.
 
-**Vercel (web)** — project root `web/`. Variables: `ATLAS_API_URL` (Railway URL),
-`ATLAS_API_TOKEN` (same as Railway), `ATLAS_ALLOWED_EMAILS`, `ATLAS_ACCESS_CODE`,
+**Vercel (web)** — project root `web/`. Variables: `DIA_API_URL` (Railway URL),
+`DIA_API_TOKEN` (same as Railway), `DIA_ALLOWED_EMAILS`, `DIA_ACCESS_CODE`,
 `SESSION_SECRET` (random, 32+ chars).
 
 ## API
 
-All routes except `/health` need `Authorization: Bearer $ATLAS_API_TOKEN`.
+All routes except `/health` need `Authorization: Bearer $DIA_API_TOKEN`.
 
 | Method | Path | |
 |---|---|---|

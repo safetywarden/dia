@@ -7,7 +7,7 @@ export default function Login() {
   return (
     <main className="login">
       <form action={action} className="card login-card">
-        <div className="brand-lg">Atlas <span>Demand</span></div>
+        <div className="brand-lg">BConz <span>DIA</span></div>
         <p className="muted">Who needs your data — and the lawful way to reach them.</p>
         <label>Work email<input name="email" type="email" required autoComplete="email" /></label>
         <label>Access code<input name="code" type="password" required autoComplete="current-password" /></label>

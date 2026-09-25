@@ -13,11 +13,11 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 
-from atlas import dia, pcia
+from bconz import dia, pcia
 
 from . import db
 
-log = logging.getLogger("atlas.worker")
+log = logging.getLogger("bconz.worker")
 POLL_SECONDS = 3
 
 
@@ -158,5 +158,5 @@ def loop(stop: threading.Event) -> None:
 
 def start() -> threading.Event:
     stop = threading.Event()
-    threading.Thread(target=loop, args=(stop,), name="atlas-worker", daemon=True).start()
+    threading.Thread(target=loop, args=(stop,), name="bconz-dia-worker", daemon=True).start()
     return stop

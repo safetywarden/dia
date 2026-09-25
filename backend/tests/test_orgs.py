@@ -1,6 +1,6 @@
 import pytest
 
-from atlas.orgs import country_code, institution_from_affiliation as inst, org_key
+from bconz.orgs import country_code, institution_from_affiliation as inst, org_key
 
 
 @pytest.mark.parametrize("affil,expected", [
@@ -44,7 +44,7 @@ def test_no_fallback_to_cities_or_fields():
     ("Mayo Clinic", False), ("European Myeloma Network", False), ("Azafaros B.V.", False),
 ])
 def test_looks_like_person(name, expected):
-    from atlas.orgs import looks_like_person
+    from bconz.orgs import looks_like_person
     assert looks_like_person(name) is expected
 
 
@@ -54,7 +54,7 @@ def test_looks_like_person(name, expected):
     ("SCRIPPS RESEARCH INSTITUTE, THE", "Scripps Research Institute"),
 ])
 def test_nih_display(raw, shown):
-    from atlas.orgs import display_name
+    from bconz.orgs import display_name
     assert display_name(raw) == shown
 
 
@@ -73,14 +73,14 @@ def test_md_anderson_merges_across_registries():
 
 
 def test_grant_relevance():
-    from atlas.dia import grant_is_about
+    from bconz.dia import grant_is_about
     assert grant_is_about("Gaucher disease", "Gene therapy for Gaucher disease type 1", "")
     assert not grant_is_about("Gaucher disease", "Lipids in diabetic kidney disease",
                               "... as seen in Gaucher ... lipid storage ...")
 
 
 def test_need_detection_requires_a_gap_for_method_phrases():
-    from atlas.dia import detect_needs
+    from bconz.dia import detect_needs
     assert "real_world_data" not in detect_needs(
         "We evaluated lyso-Gb1 using real-world data from the Gaucher Outcome Survey.")
     assert "real_world_data" in detect_needs(
@@ -90,7 +90,7 @@ def test_need_detection_requires_a_gap_for_method_phrases():
 
 
 def test_nih_intramural_maps_to_parent():
-    from atlas.orgs import registry_org_name
+    from bconz.orgs import registry_org_name
     assert registry_org_name("Division of Basic Sciences - NCI") == "National Cancer Institute"
     assert registry_org_name("Mayo Clinic Rochester") == "Mayo Clinic Rochester"
 

@@ -2,7 +2,7 @@
 """
 DIA — Demand Intelligence Agent.
 
-  python -m atlas.dia --disease "multiple myeloma" --out ./out_mm
+  python -m bconz.dia --disease "multiple myeloma" --out ./out_mm
 
 WHAT THIS IS
     Finds organisations that have publicly stated they need data in a disease,
