@@ -63,6 +63,13 @@ Tests: `cd backend && python -m pytest -q tests`
 `DIA_CORS` (optional). Start command and health check are in `backend/railway.json`.
 Keep one replica: the worker and scheduler run in-process.
 
+**Database** — Railway Postgres in the same project, reached only over the private network
+(`postgres.railway.internal`; no public TCP proxy). Volume backups are scheduled in
+Railway → Postgres → Backups (first manual backup 2026-09-25). Point-in-time recovery is off;
+enable it there if minute-level restore becomes necessary. To restore: Backups → pick a
+backup → Restore, then redeploy the `dia` service. `LEGACY_DATABASE_URL` triggers a one-time
+copy onto a new `DATABASE_URL` if the database ever moves (see `app/db.py`).
+
 **Vercel (web)** — project root `web/`. Variables: `DIA_API_URL` (Railway URL),
 `DIA_API_TOKEN` (same as Railway), `DIA_ALLOWED_EMAILS`, `DIA_ACCESS_CODE`,
 `SESSION_SECRET` (random, 32+ chars).
