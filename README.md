@@ -1,4 +1,4 @@
-# BConz DIA — DIA + PCIA
+# BCONZ DIA — DIA + PCIA
 
 Finds organisations that have **publicly stated they need data** in a disease, ranks them, and
 resolves **contacts that were published to be contacted**, each with its source URL and lawful basis.

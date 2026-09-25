@@ -56,6 +56,7 @@ export default function Dashboard() {
 
   return (
     <main className="wrap">
+      <p className="eyebrow">Demand intelligence</p>
       <h1>Who needs data in…</h1>
       <p className="muted">
         Searches papers that state a data gap, active NIH grants and live trials, ranks the organisations

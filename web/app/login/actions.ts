@@ -14,7 +14,7 @@ export async function signIn(_: string | null, form: FormData): Promise<string |
   const expected = (process.env.DIA_ACCESS_CODE ?? "").trim();
   // One message for every failure, so the form does not reveal who is allowed.
   if (!expected || !allowedEmails().includes(email) || !same(code, expected)) {
-    return "That email and access code do not match a BConz DIA account.";
+    return "That email and access code do not match a BCONZ DIA account.";
   }
   await createSession(email);
   redirect("/");

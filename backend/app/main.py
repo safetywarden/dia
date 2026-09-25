@@ -1,4 +1,4 @@
-"""BConz DIA API: runs DIA -> PCIA and serves leads, contacts and gated export.
+"""BCONZ DIA API: runs DIA -> PCIA and serves leads, contacts and gated export.
 
 Every route except /health requires `Authorization: Bearer $DIA_API_TOKEN`.
 The web app holds that token server-side and forwards the signed-in user's
@@ -43,7 +43,7 @@ async def lifespan(_: FastAPI):
         stop.set()
 
 
-app = FastAPI(title="BConz DIA API", version=dia.VERSION, lifespan=lifespan)
+app = FastAPI(title="BCONZ DIA API", version=dia.VERSION, lifespan=lifespan)
 app.add_middleware(CORSMiddleware,
                    allow_origins=[o for o in os.environ.get("DIA_CORS", "").split(",") if o],
                    allow_methods=["*"], allow_headers=["*"])
