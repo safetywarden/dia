@@ -25,7 +25,7 @@ from atlas import dia, pcia
 from . import db, worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-TOKEN = os.environ.get("ATLAS_API_TOKEN", "")
+TOKEN = os.environ.get("ATLAS_API_TOKEN", "").strip()
 RUN_WORKER = os.environ.get("ATLAS_RUN_WORKER", "1") == "1"
 
 

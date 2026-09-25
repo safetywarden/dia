@@ -7,7 +7,7 @@ const COOKIE = "atlas_session";
 const MAX_AGE = 60 * 60 * 12; // 12 hours
 
 function secret() {
-  const s = process.env.SESSION_SECRET ?? "";
+  const s = (process.env.SESSION_SECRET ?? "").trim();
   if (s.length < 32) throw new Error("SESSION_SECRET must be at least 32 characters");
   return new TextEncoder().encode(s);
 }

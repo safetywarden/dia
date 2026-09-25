@@ -11,7 +11,7 @@ function same(a: string, b: string) {
 export async function signIn(_: string | null, form: FormData): Promise<string | null> {
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   const code = String(form.get("code") ?? "");
-  const expected = process.env.ATLAS_ACCESS_CODE ?? "";
+  const expected = (process.env.ATLAS_ACCESS_CODE ?? "").trim();
   // One message for every failure, so the form does not reveal who is allowed.
   if (!expected || !allowedEmails().includes(email) || !same(code, expected)) {
     return "That email and access code do not match an Atlas account.";
