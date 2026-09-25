@@ -68,6 +68,25 @@ def test_run_and_gated_export(client):
     assert len(client.get(f"/runs/{rid}/exports").json()) == 1      # refused one not logged
 
 
+def test_legacy_migration_copies_once_and_keeps_ids(client, tmp_path, monkeypatch):
+    rid = _run(client)
+    client.post("/suppression", json={"value": "x@y.org"})
+    from app import db
+    old_url = db.URL
+
+    # Point the app at a fresh database, with the old one as legacy.
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path/'new.db'}")
+    monkeypatch.setenv("LEGACY_DATABASE_URL", old_url)
+    importlib.reload(db)
+    db.Base.metadata.create_all(db.engine)
+    counts = db.migrate_from_legacy()
+    assert counts["runs"] == 1 and counts["leads"] == 1 and counts["contacts"] == 3
+    assert counts["suppression"] == 1
+    with db.Session() as s:
+        assert s.get(db.Run, rid).disease == "multiple myeloma"
+    assert db.migrate_from_legacy() is None          # second boot: no duplicates
+
+
 def test_suppression_reaches_stored_records(client):
     rid = _run(client)
     client.post("/suppression", json={"value": "OK@mayo.edu", "reason": "asked to stop"})

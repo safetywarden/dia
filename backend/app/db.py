@@ -10,8 +10,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
 def _url() -> str:
-    url = os.environ.get("DATABASE_URL", "sqlite:///./bconz_dia.db")
-    # Railway hands out postgres://; SQLAlchemy wants an explicit driver.
+    return _normalise(os.environ.get("DATABASE_URL", "sqlite:///./bconz_dia.db"))
+
+
+def _normalise(url: str) -> str:
+    url = url.strip()
+    # Railway and Supabase hand out postgres(ql)://; SQLAlchemy wants a driver.
     if url.startswith("postgres://"):
         url = "postgresql+psycopg://" + url[len("postgres://"):]
     elif url.startswith("postgresql://"):
@@ -121,3 +125,48 @@ class Watch(Base):
 
 def init() -> None:
     Base.metadata.create_all(engine)
+    migrate_from_legacy()
+
+
+# Parents before children, so foreign keys hold during the copy.
+COPY_ORDER = [Watch, Run, Lead, Contact, Suppression, Export]
+
+
+def migrate_from_legacy() -> dict[str, int] | None:
+    """One-time move of existing data onto a new database (e.g. Railway
+    Postgres -> Supabase). Runs only when LEGACY_DATABASE_URL is set and the
+    new database has no runs yet, so restarts never duplicate rows. IDs are
+    preserved so links to /runs/<id> keep working."""
+    import logging
+
+    from sqlalchemy import func, insert, select, text
+
+    legacy = os.environ.get("LEGACY_DATABASE_URL", "").strip()
+    if not legacy:
+        return None
+    src_url = _normalise(legacy)
+    if src_url == URL:
+        return None
+    log = logging.getLogger("bconz.migrate")
+    with Session() as s:
+        if s.scalar(select(func.count()).select_from(Run)):
+            log.info("target already has runs; legacy migration skipped")
+            return None
+    src = create_engine(src_url, pool_pre_ping=True)
+    counts: dict[str, int] = {}
+    with src.connect() as rc, engine.begin() as wc:
+        for model in COPY_ORDER:
+            t = model.__table__
+            rows = [dict(r._mapping) for r in rc.execute(select(t))]
+            if rows:
+                wc.execute(insert(t), rows)
+            counts[t.name] = len(rows)
+        if engine.dialect.name == "postgresql":
+            # Copied explicit IDs; move each sequence past them.
+            for model in COPY_ORDER:
+                n = model.__tablename__
+                wc.execute(text(f"SELECT setval(pg_get_serial_sequence('{n}', 'id'), "
+                                f"COALESCE((SELECT MAX(id) FROM {n}), 0) + 1, false)"))
+    src.dispose()
+    log.info("legacy migration copied %s", counts)
+    return counts
