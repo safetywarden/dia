@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
+import { api, REGISTRY_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
 
 type Tab = "leads" | "contacts" | "method";
 const DIM_LABEL: Record<string, string> = {
@@ -66,6 +66,7 @@ export default function RunView({ id }: { id: number }) {
       <h1>Who needs {run.disease} data</h1>
       <p className="muted small">
         Search #{run.id} · started by {run.created_by} · {new Date(run.created_at).toLocaleString()} ·{" "}
+        {s.regions && <>markets {s.regions.map((x) => x.toUpperCase()).join(", ")} ·{" "}</>}
         <span className={`s-${run.status}`}>{run.status}</span>
       </p>
 
@@ -193,7 +194,7 @@ function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: num
         <summary>Evidence ({l.signals.length})</summary>
         {l.signals.slice(0, 12).map((s) => (
           <p key={s.url} className="ev">
-            <strong>{SOURCE_LABEL[s.source]}</strong> · {s.date || "undated"} ·{" "}
+            <strong>{REGISTRY_LABEL[String(s.extra?.registry ?? "")] ?? SOURCE_LABEL[s.source]}</strong> · {s.date || "undated"} ·{" "}
             <a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> — {s.snippet}
           </p>
         ))}

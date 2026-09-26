@@ -47,7 +47,7 @@ LEGAL = re.compile(r"\b(inc|ltd|llc|plc|gmbh|corp|corporation|co|ag|s\.?a|"
 COUNTRIES = {
     "india": "IN", "united states": "US", "usa": "US", "u.s.a": "US",
     "united kingdom": "GB", "uk": "GB", "england": "GB", "scotland": "GB",
-    "wales": "GB", "ireland": "IE", "germany": "DE", "france": "FR",
+    "wales": "GB", "northern ireland": "GB", "great britain": "GB", "ireland": "IE", "germany": "DE", "france": "FR",
     "italy": "IT", "spain": "ES", "netherlands": "NL", "the netherlands": "NL",
     "belgium": "BE", "sweden": "SE", "denmark": "DK", "norway": "NO",
     "finland": "FI", "poland": "PL", "austria": "AT", "portugal": "PT",

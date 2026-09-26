@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { api, type Run, type Watch } from "@/lib/types";
+import { api, MARKETS, type Run, type Watch } from "@/lib/types";
 
 const when = (s: string | null) => (s ? new Date(s).toLocaleString() : "—");
 
@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [watches, setWatches] = useState<Watch[]>([]);
   const [disease, setDisease] = useState("");
   const [top, setTop] = useState(20);
+  const [markets, setMarkets] = useState<string[]>(MARKETS.map((m) => m.id));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,7 +36,7 @@ export default function Dashboard() {
     setBusy(true); setError("");
     try {
       const r = await api<Run>("runs", { method: "POST",
-        body: JSON.stringify({ disease, top_contacts: top }) });
+        body: JSON.stringify({ disease, top_contacts: top, regions: markets }) });
       router.push(`/runs/${r.id}`);
     } catch (e) { setError((e as Error).message); setBusy(false); }
   }
@@ -73,7 +74,18 @@ export default function Dashboard() {
             {[10, 20, 30, 45].map((n) => <option key={n} value={n}>{n} leads</option>)}
           </select>
         </label>
-        <button className="btn primary" disabled={busy}>{busy ? "Starting…" : "Find demand"}</button>
+        <button className="btn primary" disabled={busy || markets.length === 0}>{busy ? "Starting…" : "Find demand"}</button>
+        <fieldset className="markets">
+          <legend>Markets</legend>
+          {MARKETS.map((m) => (
+            <label key={m.id} className="check" title={m.note}>
+              <input type="checkbox" checked={markets.includes(m.id)}
+                     onChange={(e) => setMarkets((cur) => e.target.checked ? [...cur, m.id] : cur.filter((x) => x !== m.id))} />
+              {m.label}
+            </label>
+          ))}
+          <span className="muted small">India (CTRI): pending registry access · Papers and ClinicalTrials.gov are always searched worldwide.</span>
+        </fieldset>
       </form>
       {error && <p className="error" style={{ marginTop: 10 }}>{error}</p>}
 

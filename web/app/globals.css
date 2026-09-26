@@ -138,3 +138,9 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); margin
   overflow: auto; white-space: pre-wrap; margin: 0; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .spacer { flex: 1; }
+
+.markets { grid-column: 1 / -1; border: 0; padding: 0; margin: 4px 0 0; display: flex; flex-wrap: wrap;
+  gap: 8px 18px; align-items: center; }
+.markets legend { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 400; font-size: 14px; }
+.check input { width: auto; }

@@ -50,6 +50,13 @@ def _run(client):
     return rid
 
 
+def test_markets_are_recorded_and_required(client):
+    r = client.post("/runs", json={"disease": "Gaucher disease", "regions": ["uk", "eu", "uk"]}).json()
+    assert r["params"]["regions"] == ["eu", "uk"]
+    assert client.post("/runs", json={"disease": "Gaucher disease", "regions": []}).status_code == 422
+    assert client.post("/runs", json={"disease": "Gaucher disease", "regions": ["xx"]}).status_code == 422
+
+
 def test_auth_required(client):
     assert client.get("/runs", headers={"Authorization": "Bearer nope"}).status_code == 401
     assert client.get("/health").status_code == 200

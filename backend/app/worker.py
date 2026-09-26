@@ -59,7 +59,8 @@ def execute(run_id: int) -> None:
     doc = dia.run(disease, years=params.get("years", 3),
                   max_pubs=params.get("max_pubs", 200),
                   max_grants=params.get("max_grants", 100),
-                  max_trials=params.get("max_trials", 100), log=progress)
+                  max_trials=params.get("max_trials", 300), log=progress,
+                  regions=params.get("regions") or dia.REGIONS)
     progress(f"DIA done: {doc['summary']['organisations']} organisations — resolving contacts")
     contacts = pcia.resolve(doc, top=params.get("top_contacts", 20),
                             suppression=suppression_set(), log=progress)

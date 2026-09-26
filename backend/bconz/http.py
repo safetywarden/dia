@@ -10,11 +10,14 @@ UA = "bconz-DIA/1.0 (research data partnership discovery; contact: hello@bconz.c
 TIMEOUT = 40
 
 
-def get(url: str, as_json: bool = True, retries: int = 2, data: dict | None = None):
+def get(url: str, as_json: bool = True, retries: int = 2, data: dict | None = None,
+        accept: str | None = None):
     """GET (or POST when `data` is given). Returns None after the last failure
     rather than raising: one flaky registry must not sink a whole run."""
     body = json.dumps(data).encode() if data is not None else None
     headers = {"User-Agent": UA}
+    if accept:
+        headers["Accept"] = accept
     if body is not None:
         headers["Content-Type"] = "application/json"
     for attempt in range(retries + 1):

@@ -5,7 +5,8 @@ resolves **contacts that were published to be contacted**, each with its source 
 
 ```
 disease ──► DIA (Demand Intelligence Agent) ──► ranked leads + verbatim stated needs
-                 Europe PMC · NIH RePORTER · ClinicalTrials.gov
+                 Europe PMC · ClinicalTrials.gov (global)
+                 US: NIH RePORTER · EU: CTIS, CORDIS · UK: ISRCTN, UKRI
                                    │
                                    ▼
             PCIA (Provenance-first Contact Intelligence Agent) ──► gated contacts
@@ -87,3 +88,22 @@ All routes except `/health` need `Authorization: Bearer $DIA_API_TOKEN`.
 | GET | `/runs/{id}/contacts.csv?strict=` | gated export; `X-Exported-Rows`, `X-Excluded-Rows` |
 | GET/POST/DELETE | `/suppression` | do-not-contact list |
 | GET/POST/DELETE | `/watches` | weekly re-runs that flag only new signals |
+
+## Sources by market
+
+| Market | Trials | Funding | Contacts PCIA may use |
+|---|---|---|---|
+| Global | ClinicalTrials.gov | — | Registry central contacts; open-access corresponding authors (Europe PMC) |
+| US | — | NIH RePORTER | PI names only (no email published) |
+| EU | CTIS | CORDIS (Horizon) | **None from CTIS** — its investigator/CRO emails are published under trial-transparency law, not for contact |
+| UK | ISRCTN | UKRI Gateway to Research | ISRCTN contacts the registrant marked **Public** |
+| India | **CTRI — not connected** | — | — |
+
+A trial registered in several registries is counted once (matched on NCT, EU CT/EudraCT
+and ISRCTN numbers only — never on shared grant or protocol codes). CTIS lists EU sites
+only, so its trials never assert "no Indian sites".
+
+**CTRI** requires a CAPTCHA on every search, which this tool will not bypass. Routes to
+lawful access: (1) request the WHO ICTRP data service, which republishes CTRI; (2) ask
+ICMR-NIMS (CTRI's operator) for a data-sharing arrangement. Until then India is covered
+through Indian sites on ClinicalTrials.gov and Indian-affiliated papers in Europe PMC.

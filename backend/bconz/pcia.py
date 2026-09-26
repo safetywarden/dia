@@ -456,6 +456,53 @@ def contacts_from_trial(nct: str, lead_org: str, why: str,
     return out
 
 
+# ------------------------------------------------------ source: ISRCTN (UK)
+
+def contacts_from_isrctn(isrctn: str, lead_org: str, why: str,
+                         lead_country: str = "") -> list[ContactRecord]:
+    """Contacts the registrant marked **Public** on ISRCTN.
+
+    ISRCTN asks the registrant, per contact, whether it may be shown publicly;
+    "Protected" contacts are withheld by ISRCTN and never reach this tool.
+    That explicit choice is recorded in the snippet as the provenance.
+    """
+    import xml.etree.ElementTree as ET
+
+    out: list[ContactRecord] = []
+    num = isrctn.upper().removeprefix("ISRCTN")
+    raw = _get(f"https://www.isrctn.com/api/trial/ISRCTN{num}/format/default", as_json=False)
+    time.sleep(0.3)
+    if not raw:
+        return out
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return out
+    for e in root.iter():
+        e.tag = e.tag.split("}")[-1]
+    url = f"https://www.isrctn.com/ISRCTN{num}"
+    for c in root.iter("contact"):
+        if (c.findtext("privacy") or "").strip().lower() != "public":
+            continue
+        email = (c.findtext(".//email") or "").strip()
+        if not email or not EMAIL_RE.fullmatch(email):
+            continue
+        name = " ".join(x for x in (c.findtext("forename"), c.findtext("surname"))
+                        if x and x.strip() not in ("-", "None")).strip() or "Study contact"
+        roles = [t.text for t in c.iter("contactType") if t.text]
+        country = c.findtext(".//country") or ""
+        out.append(ContactRecord(
+            org_display=lead_org, org_key="", person_name=name,
+            person_role=", ".join(roles) or "Study contact", channel="email", value=email,
+            provenance=_prov(url, SourceType.REGISTRY_PUBLISHED_CONTACT,
+                             f"Contact on ISRCTN{num} ({', '.join(roles) or 'contact'}), "
+                             f"privacy set to Public by the registrant.", "ISRCTN",
+                             ("affiliation", country), ("email", email),
+                             ("lead_country", lead_country)),
+            why_this_person=why, notes=[f"ISRCTN{num}"]))
+    return out
+
+
 # ------------------------------------------------------- source: NIH grants
 
 def contact_from_grant(person: str, org: str, url: str, why: str,
@@ -670,9 +717,13 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
                 if m:
                     found += contacts_from_publication(m.group(1), org, why, country)
             elif src == "trials":
-                nct = (s.get("extra", {}) or {}).get("nct")
-                if nct:
-                    found += contacts_from_trial(nct, org, why, country)
+                extra = s.get("extra", {}) or {}
+                if extra.get("nct"):
+                    found += contacts_from_trial(extra["nct"], org, why, country)
+                if extra.get("isrctn"):
+                    found += contacts_from_isrctn(extra["isrctn"], org, why, country)
+                # CTIS publishes investigator and CRO emails under EU trial
+                # transparency law, not for contact. Deliberately not used.
             elif src == "grants" and s.get("person"):
                 found.append(contact_from_grant(s["person"], org, s.get("url", ""), why,
                                                 s.get("country") or "US"))

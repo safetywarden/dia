@@ -18,8 +18,12 @@ THE SIGNAL NOBODY MINES
 
 SOURCES (all free, no keys)
     Europe PMC           stated data limitation   verbatim gap, affiliation, date
-    NIH RePORTER         funded programme         award, named PI, end date
+    NIH RePORTER         funded programme (US)    award, named PI, end date
     ClinicalTrials.gov   active development       sponsor, phase, country footprint
+    CTIS                 active development (EU)  sponsor, phase, EU footprint
+    ISRCTN               active development (UK)  sponsor, phase, site countries
+    CORDIS               funded programme (EU)    coordinator, EU contribution
+    UKRI GtR             funded programme (UK)    lead organisation, award
 
 HONESTY RULES
     * Every dimension is checked for whether it actually discriminates across
@@ -46,9 +50,10 @@ from pathlib import Path
 from typing import Callable
 
 from . import orgs
+from . import sources_eu_uk as eu_uk
 from .http import get
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 REPORTER = "https://api.reporter.nih.gov/v2/projects/search"
 CTGOV = "https://clinicaltrials.gov/api/v2/studies"
@@ -268,8 +273,8 @@ def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
                 person=pi, person_role="principal investigator",
                 country=orgs.country_code(org.get("org_country", "")) or "US",
                 needs={"funded_programme": f"Funded project: {r.get('project_title','')}"},
-                extra={"award": amt, "end": end, "project_num": r.get("project_num", ""),
-                       "ic": ic}))
+                extra={"registry": "NIH", "funder": ic, "award": amt, "currency": "USD", "award_usd": amt,
+                       "end": end, "project_num": r.get("project_num", ""), "ic": ic}))
         offset += len(res)
         if offset >= ((d or {}).get("meta") or {}).get("total", 0):
             break
@@ -293,7 +298,7 @@ def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
             "fields": "NCTId,BriefTitle,LeadSponsorName,LeadSponsorClass,Phase,"
                       "OverallStatus,EnrollmentCount,StartDate,LocationCountry,"
                       "OverallOfficialName,OverallOfficialAffiliation,"
-                      "CentralContactName"}
+                      "CentralContactName,SecondaryId"}
         if token:
             params["pageToken"] = token
         d = get(CTGOV + "?" + urllib.parse.urlencode(params))
@@ -344,8 +349,9 @@ def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
                            + (" …" if len(countries) > 6 else "") if countries else ""),
                 person=person, person_role="principal investigator" if person else "",
                 country=home, sponsor_class=spons.get("class", ""), needs=needs,
-                extra={"nct": nct, "phases": phases, "enrolment": enrol,
-                       "countries": countries,
+                extra={"registry": "ClinicalTrials.gov", "nct": nct, "phases": phases,
+                       "enrolment": enrol, "countries": countries,
+                       "secondary_ids": [x.get("id", "") for x in ident.get("secondaryIdInfos") or []],
                        "official_affiliation": officials[0].get("affiliation", "")
                        if officials else ""}))
         token = d.get("nextPageToken")
@@ -403,7 +409,8 @@ def score_dimensions(lead: Lead) -> dict[str, float]:
         miss *= 1 - NEEDS[code][1]
     need_fit = 1 - miss
 
-    grants = [s.extra.get("award", 0) or 0 for s in sig if s.source == "grants"]
+    grants = [s.extra.get("award_usd", s.extra.get("award", 0)) or 0
+              for s in sig if s.source == "grants"]
     budget = min(1.0, math.log10(1 + sum(grants)) / math.log10(1 + 5_000_000)) if grants else 0.0
     for s in sig:
         if s.source == "trials":
@@ -539,27 +546,46 @@ def finalise(leads: list[Lead]) -> dict[str, dict]:
 
 # --------------------------------------------------------------------- run
 
+REGIONS = ("us", "eu", "uk")
+
+
 def run(disease: str, years: int = 3, max_pubs: int = 200, max_grants: int = 100,
-        max_trials: int = 100, log: Progress | None = None) -> dict:
+        max_trials: int = 300, log: Progress | None = None,
+        regions: tuple[str, ...] | list[str] = REGIONS) -> dict:
     """Harvest, merge, score. Returns the leads.json document."""
     log = log or (lambda m: print(f"  {m}", file=sys.stderr))
+    core = disease_core(disease)
+    # Europe PMC and ClinicalTrials.gov are global; NIH funding is US-only.
     signals = (harvest_publications(disease, years, max_pubs, log)
-               + harvest_grants(disease, max_grants, log)
+               + (harvest_grants(disease, max_grants, log) if "us" in regions else [])
                + harvest_trials(disease, max_trials, log))
+    # Europe and the UK. ClinicalTrials.gov goes first so it is canonical
+    # when one trial is registered in several places.
+    if "eu" in regions:
+        signals += (eu_uk.harvest_ctis(disease, max_trials, log, Signal, core)
+                    + eu_uk.harvest_cordis(disease, max_grants, log, Signal, core))
+    if "uk" in regions:
+        signals += (eu_uk.harvest_isrctn(disease, max_trials, log, Signal, core)
+                    + eu_uk.harvest_ukri(disease, max_grants, log, Signal, core))
+    signals, dup = eu_uk.dedupe_trials(signals)
+    if dup:
+        log(f"merged {dup} trial(s) registered in more than one registry")
     leads = build_leads(signals)
     diag = finalise(leads)
     for dim, d in diag.items():
         if not d["informative"]:
             log(f"diagnostic: {dim} distinct={d['distinct']} — not discriminating, "
                 f"shown as a badge and excluded from the score")
-    by_src = defaultdict(int)
+    by_src, by_registry = defaultdict(int), defaultdict(int)
     for s in signals:
         by_src[s.source] += 1
+        by_registry[s.extra.get("registry") or "Europe PMC"] += 1
     return {
         "disease": disease, "version": VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {"signals": len(signals), "organisations": len(leads),
-                    "by_source": dict(by_src),
+                    "by_source": dict(by_src), "by_registry": dict(by_registry),
+                    "regions": list(regions),
                     "tiers": {t: sum(1 for l in leads if l.tier == t) for t in "ABC"}},
         "diagnostics": diag,
         "leads": [{**{k: v for k, v in asdict(l).items() if k != "signals"},
@@ -640,7 +666,7 @@ def main(argv=None) -> int:
     ap.add_argument("--years", type=int, default=3)
     ap.add_argument("--max-pubs", type=int, default=200)
     ap.add_argument("--max-grants", type=int, default=100)
-    ap.add_argument("--max-trials", type=int, default=100)
+    ap.add_argument("--max-trials", type=int, default=300)
     a = ap.parse_args(argv)
     print(f"DIA v{VERSION} — {a.disease}", file=sys.stderr)
     doc = run(a.disease, a.years, a.max_pubs, a.max_grants, a.max_trials)

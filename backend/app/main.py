@@ -13,6 +13,7 @@ import io
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,6 +64,9 @@ class RunIn(BaseModel):
     disease: str = Field(min_length=3, max_length=200)
     top_contacts: int = Field(20, ge=0, le=60)
     years: int = Field(3, ge=1, le=10)
+    # Markets whose registries to search. Europe PMC and ClinicalTrials.gov are
+    # global and always included.
+    regions: list[Literal["us", "eu", "uk"]] = Field(default_factory=lambda: ["us", "eu", "uk"])
 
 
 class SuppressIn(BaseModel):
@@ -103,9 +107,12 @@ def health():
 
 @app.post("/runs", status_code=201)
 def create_run(body: RunIn, who: str = Depends(user)):
+    if not body.regions:
+        raise HTTPException(422, "choose at least one market")
     with db.Session() as s:
         r = db.Run(disease=body.disease.strip(), created_by=who,
-                   params={"top_contacts": body.top_contacts, "years": body.years})
+                   params={"top_contacts": body.top_contacts, "years": body.years,
+                           "regions": sorted(set(body.regions))})
         s.add(r)
         s.commit()
         return run_out(r, full=True)
