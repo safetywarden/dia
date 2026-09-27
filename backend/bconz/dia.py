@@ -404,7 +404,8 @@ def apply_geography(signals: list[Signal], query: SearchQuery) -> None:
         codes = {orgs.country_code(c) for c in s.extra.get("countries") or []} - {""}
         if not codes:
             continue
-        tid = s.extra.get("nct") or s.extra.get("isrctn") or "this trial"
+        tid = (s.extra.get("nct") or (f"ISRCTN{s.extra['isrctn']}" if s.extra.get("isrctn") else "")
+               or "this trial")
         if query.worldwide:
             regions = {REGION_OF[c] for c in codes if c in REGION_OF}
             if len(regions) <= 1:

@@ -186,7 +186,8 @@ def _as_list(x):
 def harvest_cordis(q, limit: int, log, Signal) -> list:
     if not q.phrases:
         return []
-    terms = " AND ".join(f"'{p}'" for p in q.phrases)
+    # CORDIS quotes phrases with ' , so an apostrophe ("Alzheimer's") breaks the query.
+    terms = " AND ".join("'" + p.replace("'", " ") + "'" for p in q.phrases)
     cq = f"contenttype='project' AND {terms} AND status='SIGNED'"
     d = get(f"{CORDIS}?" + urllib.parse.urlencode({"q": cq, "format": "json", "p": 1,
                                                     "num": min(limit, 100)}))
