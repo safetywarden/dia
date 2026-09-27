@@ -56,7 +56,7 @@ from . import sources_eu_uk as eu_uk
 from .query import DATA_TYPES, SUPPLY, SearchQuery, core_term, supply_label, supply_pitch
 from .http import get
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 REPORTER = "https://api.reporter.nih.gov/v2/projects/search"
 CTGOV = "https://clinicaltrials.gov/api/v2/studies"
@@ -626,6 +626,16 @@ def run(query: "SearchQuery | str | dict", years: int = 3, max_pubs: int = 200,
     if q.empty:
         raise ValueError("a search needs a disease, drug, biomarker or company")
     log(f"searching: {q.label()} · offering data from {supply_label(q.supply)}")
+    signals = collect(q, years, max_pubs, max_grants, max_trials, log, regions)
+    return assemble(signals, q, log, regions)
+
+
+def collect(q: SearchQuery, years: int = 3, max_pubs: int = 200, max_grants: int = 100,
+            max_trials: int = 300, log: Progress | None = None,
+            regions: tuple[str, ...] | list[str] = REGIONS) -> list[Signal]:
+    """Harvest every source for one query. Signals remember the disease they
+    were found for, so a multi-disease dataset match can say which it was."""
+    log = log or (lambda m: None)
     # Europe PMC and ClinicalTrials.gov are global; NIH funding is US-only.
     signals = (harvest_publications(q, years, max_pubs, log)
                + (harvest_grants(q, max_grants, log) if "us" in regions else [])
@@ -648,6 +658,18 @@ def run(query: "SearchQuery | str | dict", years: int = 3, max_pubs: int = 200,
         before = len(signals)
         signals = [s for s in signals if want in orgs.org_key(s.org_raw)]
         log(f"company filter '{q.sponsor}': kept {len(signals)} of {before} signals")
+    for sg in signals:
+        sg.extra.setdefault("found_for", q.disease or q.label())
+    return signals
+
+
+def assemble(signals: list[Signal], q: SearchQuery, log: Progress | None = None,
+             regions: tuple[str, ...] | list[str] = REGIONS) -> dict:
+    """Merge, judge geography, build and score leads; return the leads document."""
+    log = log or (lambda m: None)
+    # The same record found by two searches (two diseases of one dataset) is one signal.
+    seen_urls: set[str] = set()
+    signals = [sg for sg in signals if not (sg.url in seen_urls or seen_urls.add(sg.url))]
     apply_geography(signals, q)
     leads = build_leads(signals, q)
     diag = finalise(leads, q)
@@ -671,6 +693,9 @@ def run(query: "SearchQuery | str | dict", years: int = 3, max_pubs: int = 200,
         "diagnostics": diag,
         "leads": [{**{k: v for k, v in asdict(l).items() if k != "signals"},
                    "sources": l.sources,
+                   # Which searched disease surfaced this lead (most signals wins).
+                   "_disease": max((sg.extra.get("found_for", "") for sg in l.signals),
+                                   key=[sg.extra.get("found_for", "") for sg in l.signals].count),
                    "signals": [asdict(s) for s in l.signals]} for l in leads],
     }
 

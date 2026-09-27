@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 
 from bconz import dia, pcia
+from bconz.fit import DatasetProfile, from_harm
 from bconz.query import DATA_TYPES, SUPPLY, SearchQuery
 
 from . import db, worker
@@ -260,6 +261,109 @@ def remove_suppression(sid: int, _: str = Depends(user)):
     with db.Session() as s:
         s.execute(delete(db.Suppression).where(db.Suppression.id == sid))
         s.commit()
+
+
+# ----------------------------------------------------------------- datasets
+
+class DatasetIn(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    partner: str = Field("", max_length=200)
+    origin: list[str] = Field(default_factory=list)
+    diseases: list[str] = Field(default_factory=list)
+    data_types: list[str] = Field(default_factory=list)
+    patients: int | None = Field(None, ge=0)
+    disease_patients: dict[str, int] = Field(default_factory=dict)
+    sites: int | None = Field(None, ge=0)
+    followup_median_years: float | None = Field(None, ge=0, le=100)
+    diverse: bool | None = None
+    prospective: bool | None = None
+    population: str = Field("", max_length=500)
+    coding: list[str] = Field(default_factory=list)
+    years: str = Field("", max_length=40)
+    source: str = "manual"
+    notes: str = Field("", max_length=2000)
+
+
+class HarmIn(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    partner: str = ""
+    origin: list[str] = Field(default_factory=list)
+    diseases: list[str] = Field(default_factory=list)
+    report: dict
+
+
+class MatchIn(BaseModel):
+    regions: list[Literal["us", "eu", "uk"]] = Field(default_factory=lambda: ["us", "eu", "uk"])
+    top_contacts: int = Field(20, ge=0, le=60)
+
+
+def dataset_out(d: db.Dataset) -> dict:
+    return {"id": d.id, "name": d.name, "partner": d.partner, "profile": d.profile,
+            "created_by": d.created_by, "created_at": d.created_at, "updated_at": d.updated_at}
+
+
+def _profile(body: DatasetIn) -> DatasetProfile:
+    p = DatasetProfile.of(body.dict() if hasattr(body, "dict") else body.model_dump())
+    if not p.diseases:
+        raise HTTPException(422, "a dataset needs at least one disease")
+    return p
+
+
+@app.get("/datasets")
+def list_datasets(_: str = Depends(user)):
+    with db.Session() as s:
+        return [dataset_out(d) for d in s.scalars(select(db.Dataset).order_by(db.Dataset.updated_at.desc()))]
+
+
+@app.post("/datasets", status_code=201)
+def create_dataset(body: DatasetIn, who: str = Depends(user)):
+    p = _profile(body)
+    with db.Session() as s:
+        d = db.Dataset(name=p.name, partner=p.partner, profile=p.to_dict(), created_by=who)
+        s.add(d)
+        s.commit()
+        return dataset_out(d)
+
+
+@app.put("/datasets/{did}")
+def update_dataset(did: int, body: DatasetIn, _: str = Depends(user)):
+    p = _profile(body)
+    with db.Session() as s:
+        d = s.get(db.Dataset, did)
+        if d is None:
+            raise HTTPException(404, "dataset not found")
+        d.name, d.partner, d.profile, d.updated_at = p.name, p.partner, p.to_dict(), db.now()
+        s.commit()
+        return dataset_out(d)
+
+
+@app.delete("/datasets/{did}", status_code=204)
+def delete_dataset(did: int, _: str = Depends(user)):
+    with db.Session() as s:
+        s.execute(delete(db.Dataset).where(db.Dataset.id == did))
+        s.commit()
+
+
+@app.post("/datasets/from-harm")
+def dataset_from_harm(body: HarmIn, _: str = Depends(user)):
+    """Derive a profile from a HARM readiness_report.json for review. The
+    report itself is not stored; only the returned aggregate profile is, and
+    only if the caller then saves it."""
+    return from_harm(body.report, body.name, body.origin, body.diseases, body.partner).to_dict()
+
+
+@app.post("/datasets/{did}/match", status_code=201)
+def match_dataset(did: int, body: MatchIn, who: str = Depends(user)):
+    with db.Session() as s:
+        d = s.get(db.Dataset, did)
+        if d is None:
+            raise HTTPException(404, "dataset not found")
+        r = db.Run(disease=f"Buyers for {d.name}"[:200], created_by=who,
+                   params={"dataset_id": d.id, "dataset": d.profile, "regions": sorted(set(body.regions)),
+                           "top_contacts": body.top_contacts})
+        s.add(r)
+        s.commit()
+        return run_out(r, full=True)
 
 
 # ------------------------------------------------------------------ watches

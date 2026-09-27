@@ -86,6 +86,36 @@ def test_new_column_added_to_existing_database(tmp_path, monkeypatch):
     db.init()                                   # second start: no error, no duplicate
 
 
+def test_dataset_profile_and_buyer_match(client, monkeypatch):
+    body = {"name": "US ophthalmology EHR", "partner": "Partner A", "origin": ["US"],
+            "diseases": ["glaucoma", "diabetic retinopathy"], "data_types": ["ehr", "imaging"],
+            "patients": 42000, "sites": 12, "followup_median_years": 4.5}
+    d = client.post("/datasets", json=body).json()
+    assert d["profile"]["origin"] == ["US"] and d["profile"]["sites"] == 12
+    assert client.post("/datasets", json={**body, "diseases": []}).status_code == 422
+
+    harm = client.post("/datasets/from-harm", json={
+        "name": "Partner B", "origin": ["US"], "diseases": ["asthma"],
+        "report": {"summary": {"patients": 900, "domains": {"visit": 1, "condition": 1}}}}).json()
+    assert harm["patients"] == 900 and harm["data_types"] == ["ehr"] and harm["source"] == "harm"
+    assert len(client.get("/datasets").json()) == 1          # derived profile is not auto-saved
+
+    seen = {}
+    def fake_match(profile, log=None, regions=None):
+        seen["profile"] = profile
+        doc = {**FAKE_DOC, "disease": f"Buyers for {profile.name}",
+               "summary": {**FAKE_DOC["summary"], "fit": {"Strong": 1}}}
+        doc["leads"] = [{**FAKE_DOC["leads"][0], "fit": {"label": "Strong", "score": 0.7}}]
+        return doc
+    monkeypatch.setattr(client.worker.fit, "match_dataset", fake_match)
+    run = client.post(f"/datasets/{d['id']}/match", json={"regions": ["us"]}).json()
+    assert run["disease"] == "Buyers for US ophthalmology EHR"
+    client.worker.execute(client.worker._claim())
+    assert seen["profile"].diseases == ["glaucoma", "diabetic retinopathy"]
+    leads = client.get(f"/runs/{run['id']}/leads").json()
+    assert leads[0]["fit"]["label"] == "Strong"
+
+
 def test_auth_required(client):
     assert client.get("/runs", headers={"Authorization": "Bearer nope"}).status_code == 401
     assert client.get("/health").status_code == 200

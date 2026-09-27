@@ -6,7 +6,7 @@ import { api, REGISTRY_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } 
 type Tab = "leads" | "contacts" | "method";
 const DIM_LABEL: Record<string, string> = {
   signal_convergence: "Convergence", stated_need_fit: "Stated need", budget_signal: "Budget",
-  recency: "Recency", geographic_opening: "No India sites", reachability: "Named people",
+  recency: "Recency", geographic_opening: "Geographic gap", reachability: "Named people",
 };
 const BASIS_LABEL: Record<string, string> = {
   DPDP_3C_II_PUBLIC: "Made public by the person for contact (DPDP §3(c)(ii) standard)",
@@ -70,7 +70,7 @@ export default function RunView({ id }: { id: number }) {
   return (
     <main className="wrap">
       <p className="small"><Link href="/">← All searches</Link></p>
-      <h1>Who needs {run.disease} data</h1>
+      <h1>{run.params?.dataset ? run.disease : `Who needs ${run.disease} data`}</h1>
       <p className="muted small">
         Search #{run.id} · started by {run.created_by} · {new Date(run.created_at).toLocaleString()} ·{" "}
         {s.regions && <>markets {s.regions.map((x) => x.toUpperCase()).join(", ")} ·{" "}</>}
@@ -90,6 +90,7 @@ export default function RunView({ id }: { id: number }) {
         <>
           <div className="tiles">
             <Tile n={s.organisations} l="Organisations" />
+            {s.fit && <><Tile n={s.fit.Strong} l="Strong fit" /><Tile n={s.fit.Partial} l="Partial fit" /></>}
             <Tile n={s.tiers?.A} l="Tier A" />
             <Tile n={s.tiers?.B} l="Tier B" />
             <Tile n={s.signals} l="Signals" />
@@ -104,7 +105,8 @@ export default function RunView({ id }: { id: number }) {
               </button>
             ))}
           </div>
-          {tab === "leads" && <Leads leads={leads} contactsByOrg={byOrg} onContacts={() => setTab("contacts")} />}
+          {run.params?.dataset && tab === "leads" && <DatasetCard p={run.params.dataset} />}
+          {tab === "leads" && <Leads isMatch={!!run.params?.dataset} leads={leads} contactsByOrg={byOrg} onContacts={() => setTab("contacts")} />}
           {tab === "contacts" && <Contacts runId={id} contacts={contacts} reload={load} />}
           {tab === "method" && <Method run={run} />}
         </>
@@ -117,9 +119,11 @@ function Tile({ n, l }: { n?: number; l: string }) {
   return <div className="tile"><div className="n">{n ?? "—"}</div><div className="l">{l}</div></div>;
 }
 
-function Leads({ leads, contactsByOrg, onContacts }:
-  { leads: Lead[]; contactsByOrg: Record<string, number>; onContacts: () => void }) {
-  const [tiers, setTiers] = useState<Set<string>>(new Set(["A", "B"]));
+function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
+  { leads: Lead[]; contactsByOrg: Record<string, number>; onContacts: () => void; isMatch?: boolean }) {
+  // A buyer match is ranked by fit, so show every tier but only real fits by default.
+  const [tiers, setTiers] = useState<Set<string>>(new Set(isMatch ? ["A", "B", "C"] : ["A", "B"]));
+  const [fitOnly, setFitOnly] = useState(isMatch);
   const [type, setType] = useState("all");
   const [stated, setStated] = useState(false);
   const [newOnly, setNewOnly] = useState(false);
@@ -128,9 +132,10 @@ function Leads({ leads, contactsByOrg, onContacts }:
 
   const shown = useMemo(() => leads.filter((l) =>
     tiers.has(l.tier) && (type === "all" || l.org_type === type)
+    && (!fitOnly || (l.fit && l.fit.label !== "Context only"))
     && (!stated || Object.keys(l.evidence).some((k) => k in NEED_LABEL))
     && (!newOnly || l.is_new)
-    && (!q || l.org_display.toLowerCase().includes(q.toLowerCase()))), [leads, tiers, type, stated, newOnly, q]);
+    && (!q || l.org_display.toLowerCase().includes(q.toLowerCase()))), [leads, tiers, type, stated, newOnly, q, fitOnly]);
 
   const toggle = (t: string) => setTiers((s) => {
     const n = new Set(s); if (n.has(t)) n.delete(t); else n.add(t); return n;
@@ -142,6 +147,7 @@ function Leads({ leads, contactsByOrg, onContacts }:
         {["A", "B", "C"].map((t) => (
           <button key={t} className="chip" aria-pressed={tiers.has(t)} onClick={() => toggle(t)}>Tier {t}</button>
         ))}
+        {isMatch && <button className="chip" aria-pressed={fitOnly} onClick={() => setFitOnly(!fitOnly)}>Strong or partial fit</button>}
         <button className="chip" aria-pressed={stated} onClick={() => setStated(!stated)}>Stated a data gap</button>
         {anyNew && <button className="chip" aria-pressed={newOnly} onClick={() => setNewOnly(!newOnly)}>New only</button>}
         <select value={type} onChange={(e) => setType(e.target.value)} style={{ width: "auto" }}>
@@ -210,8 +216,42 @@ function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: num
             No contact details inferred.</p>
         )}
       </details>
+      {l.fit && <FitBlock fit={l.fit} />}
       <div className="angle"><strong>Opening angle.</strong> {l.opening_angle}</div>
     </article>
+  );
+}
+
+const FIT_CLASS: Record<string, string> = { Strong: "tA", Partial: "tB", "Context only": "tC" };
+
+function FitBlock({ fit }: { fit: NonNullable<Lead["fit"]> }) {
+  return (
+    <div className="fit">
+      <div><span className={`pill ${FIT_CLASS[fit.label]}`}>{fit.label} fit</span>{" "}
+        <span className="muted small">{fit.summary} by this dataset</span></div>
+      <ul>
+        {fit.met.map((r) => <li key={r.need} className="met">✓ Needs {r.text} — <strong>{r.why}</strong></li>)}
+        {fit.unmet.map((r) => <li key={r.need} className="unmet">✗ Needs {r.text} — {r.why}</li>)}
+        {fit.unknown.map((r) => <li key={r.need} className="unknown">? Needs {r.text} — {r.why}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function DatasetCard({ p }: { p: NonNullable<NonNullable<Run["params"]>["dataset"]> }) {
+  const facts = [
+    p.origin.length ? `from ${p.origin.join(", ")}` : "worldwide",
+    p.data_types.length ? p.data_types.join(", ") : "",
+    p.patients != null ? `${p.patients.toLocaleString()} patients` : "",
+    p.sites != null ? `${p.sites} sites` : "",
+    p.followup_median_years != null ? `median follow-up ${p.followup_median_years} y` : "",
+  ].filter(Boolean);
+  return (
+    <div className="gate" style={{ marginBottom: 14 }}>
+      <div><strong>{p.name}</strong>{p.partner && <span className="muted"> · {p.partner}</span>}
+        <div className="muted small">{p.diseases.join(", ")} · {facts.join(" · ")}</div></div>
+      <a className="small" href="/datasets">Edit profile</a>
+    </div>
   );
 }
 

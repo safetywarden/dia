@@ -4,11 +4,13 @@ export type Run = {
     signals?: number; organisations?: number; contacts?: number; contactable?: number;
     by_source?: Record<string, number>; tiers?: Record<string, number>; new_signals?: number;
     by_registry?: Record<string, number>; regions?: string[];
+    fit?: Record<string, number>;
   };
   created_by: string; watch_id: number | null; created_at: string; finished_at: string | null;
   diagnostics?: Record<string, { distinct: number; iqr: number; informative: boolean }>;
   progress?: string[]; error?: string;
-  params?: { regions?: string[]; query?: SearchQuery; top_contacts?: number };
+  params?: { regions?: string[]; query?: SearchQuery; top_contacts?: number;
+    dataset?: DatasetProfile; dataset_id?: number };
 };
 
 export type SearchQuery = {
@@ -39,7 +41,21 @@ export type Lead = {
   dimensions: Record<string, { score: number; informative: boolean; weight: number }>;
   rationale: string[]; named_people: { name: string; role: string; source_url: string }[];
   opening_angle: string; signals: Signal[];
+  fit?: Fit; match_score?: number;
 };
+
+export type FitRow = { need: string; text: string; evidence: string; why: string };
+export type Fit = { score: number; label: "Strong" | "Partial" | "Context only"; summary: string;
+  met: FitRow[]; unmet: FitRow[]; unknown: FitRow[] };
+
+export type DatasetProfile = {
+  name: string; partner: string; origin: string[]; diseases: string[]; data_types: string[];
+  patients: number | null; disease_patients: Record<string, number>; sites: number | null;
+  followup_median_years: number | null; diverse: boolean | null; prospective: boolean | null;
+  population: string; coding: string[]; years: string; source: string; notes: string;
+};
+export type Dataset = { id: number; name: string; partner: string; profile: DatasetProfile;
+  created_by: string; created_at: string; updated_at: string };
 
 export type Contact = {
   org_display: string; org_key: string; person_name: string; person_role: string;

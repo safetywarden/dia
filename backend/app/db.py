@@ -124,6 +124,18 @@ class Watch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Dataset(Base):
+    """A dataset BCONZ can supply, described well enough to match demand."""
+    __tablename__ = "datasets"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    partner: Mapped[str] = mapped_column(String(200), default="")
+    profile: Mapped[dict] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 def init() -> None:
     Base.metadata.create_all(engine)
     _add_missing_columns()
@@ -145,7 +157,7 @@ def _add_missing_columns() -> None:
 
 
 # Parents before children, so foreign keys hold during the copy.
-COPY_ORDER = [Watch, Run, Lead, Contact, Suppression, Export]
+COPY_ORDER = [Watch, Run, Lead, Contact, Suppression, Export, Dataset]
 
 
 def migrate_from_legacy() -> dict[str, int] | None:

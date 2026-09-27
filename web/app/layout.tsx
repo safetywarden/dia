@@ -25,6 +25,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link href="/" aria-label="BCONZ DIA home"><Brand /></Link>
             <nav>
               <Link href="/">Searches</Link>
+              <Link href="/datasets">Datasets</Link>
               <Link href="/suppression">Do-not-contact</Link>
             </nav>
             <form action={signOut} className="who">
