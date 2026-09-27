@@ -23,6 +23,13 @@ const NEED_LABEL: Record<string, string> = {
   real_world_data: "Needs real-world data",
   longitudinal_gap: "Needs longer follow-up",
   retrospective_only: "Limited to retrospective data",
+  data_genomic: "Needs genomic / sequencing data",
+  data_imaging: "Needs imaging data",
+  data_ehr: "Needs longitudinal EHR data",
+  data_claims: "Needs claims / administrative data",
+  data_biobank: "Needs biobank samples",
+  data_device: "Needs wearable / monitoring data",
+  data_pro: "Needs patient-reported outcomes",
 };
 
 export default function RunView({ id }: { id: number }) {

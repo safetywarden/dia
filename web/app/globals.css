@@ -144,3 +144,12 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); margin
 .markets legend { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
 .check { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 400; font-size: 14px; }
 .check input { width: auto; }
+
+.search { display: grid; gap: 10px; }
+.search-main { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+.search-more { display: grid; gap: 16px; padding-top: 8px; border-top: 1px solid var(--line); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; }
+.checks { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.checks legend { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.search > .link { justify-self: start; }
+@media (max-width: 640px) { .search-main { grid-template-columns: 1fr; } }

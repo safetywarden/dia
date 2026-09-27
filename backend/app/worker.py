@@ -56,7 +56,7 @@ def execute(run_id: int) -> None:
         log.info("run %s: %s", run_id, msg)
         _append_progress(run_id, msg)
 
-    doc = dia.run(disease, years=params.get("years", 3),
+    doc = dia.run(params.get("query") or disease, years=params.get("years", 3),
                   max_pubs=params.get("max_pubs", 200),
                   max_grants=params.get("max_grants", 100),
                   max_trials=params.get("max_trials", 300), log=progress,
@@ -112,8 +112,13 @@ def _schedule_watches() -> None:
             busy = s.scalar(select(db.Run.id).where(
                 db.Run.watch_id == w.id, db.Run.status.in_(("queued", "running"))))
             if due and not busy:
+                q = dict(w.query or {})
+                regions = q.pop("_regions", None)
+                params = {"top_contacts": 20, "query": q or {"disease": w.disease}}
+                if regions:
+                    params["regions"] = regions
                 s.add(db.Run(disease=w.disease, watch_id=w.id, created_by="watch",
-                             params={"top_contacts": 20}))
+                             params=params))
                 w.last_run_at = db.now()      # stops re-queueing while it runs
         s.commit()
 

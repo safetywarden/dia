@@ -55,7 +55,8 @@ def test_ctis_never_claims_a_geographic_gap(monkeypatch):
         "sponsor": "Janssen Cilag International", "sponsorType": "Pharmaceutical company",
         "trialPhase": "Phase III"}], "pagination": {"nextPage": False}})
     monkeypatch.setattr(eu.time, "sleep", lambda s: None)
-    out = eu.harvest_ctis("multiple myeloma", 10, lambda m: None, dia.Signal, "multiple myeloma")
+    from bconz.query import SearchQuery
+    out = eu.harvest_ctis(SearchQuery(disease="multiple myeloma"), 10, lambda m: None, dia.Signal)
     assert len(out) == 1 and out[0].needs == {} and out[0].sponsor_class == "INDUSTRY"
     assert out[0].extra["eu_only_registry"] is True
 

@@ -49,8 +49,9 @@ def _phases(text: str) -> list[str]:
     return sorted({PHASE_CODE[f] for f in found if f in PHASE_CODE})
 
 
-def _is_about(disease_core: str, *texts: str) -> bool:
-    return any(disease_core in (t or "").lower() for t in texts)
+def _about(q, *texts: str) -> bool:
+    """Every searched phrase must appear somewhere in the record."""
+    return q.matches(*texts)
 
 
 def _eu_date(s: str) -> str:
@@ -63,7 +64,9 @@ def _eu_date(s: str) -> str:
 
 # --------------------------------------------------------------------- CTIS
 
-def harvest_ctis(disease: str, limit: int, log, Signal, core: str, years: int = 5) -> list:
+def harvest_ctis(q, limit: int, log, Signal, years: int = 5) -> list:
+    if not q.phrases:
+        return []
     out = []
     since = date(date.today().year - years, 1, 1).isoformat()
     page = 1
@@ -71,7 +74,7 @@ def harvest_ctis(disease: str, limit: int, log, Signal, core: str, years: int = 
         d = get(f"{CTIS}/search", data={
             "pagination": {"page": page, "size": 50},
             "sort": {"property": "decisionDate", "direction": "DESC"},
-            "searchCriteria": {"containAll": disease}})
+            "searchCriteria": {"containAll": " ".join(q.phrases)}})
         time.sleep(0.4)
         rows = (d or {}).get("data") or []
         if not rows:
@@ -80,7 +83,7 @@ def harvest_ctis(disease: str, limit: int, log, Signal, core: str, years: int = 
             decided = _eu_date(t.get("decisionDateOverall", ""))
             if decided and decided < since:
                 continue
-            if not _is_about(core, t.get("conditions", ""), t.get("ctTitle", "")):
+            if not _about(q, t.get("conditions", ""), t.get("ctTitle", ""), t.get("product", "")):
                 continue
             sponsor = (t.get("sponsor") or "").strip()
             if not sponsor:
@@ -114,9 +117,12 @@ def _strip(root):
     return root
 
 
-def harvest_isrctn(disease: str, limit: int, log, Signal, core: str) -> list:
+def harvest_isrctn(q, limit: int, log, Signal) -> list:
+    if not q.phrases:
+        return []
     raw = get(f"{ISRCTN}/query/format/default?" + urllib.parse.urlencode(
-        {"q": disease, "limit": min(limit * 2, 200)}), as_json=False)
+        {"q": " AND ".join(f'"{p}"' for p in q.phrases), "limit": min(limit * 2, 200)}),
+        as_json=False)
     time.sleep(0.4)
     if not raw:
         log("UK trials (ISRCTN): unavailable")
@@ -134,7 +140,8 @@ def harvest_isrctn(disease: str, limit: int, log, Signal, core: str) -> list:
             continue
         title = t.findtext(".//title") or ""
         cond = " ".join(c.text or "" for c in t.iter("description"))
-        if not _is_about(core, title, cond):
+        interventions = " ".join(e.text or "" for e in t.iter("interventionName"))
+        if not _about(q, title, t.findtext(".//scientificTitle") or "", cond, interventions):
             continue
         end = (t.findtext(".//overallEndDate") or t.findtext(".//recruitmentEnd") or "")[:10]
         if end and end < today:
@@ -148,11 +155,7 @@ def harvest_isrctn(disease: str, limit: int, log, Signal, core: str) -> list:
                            | {c.findtext("country") for c in t.iter("trialCentre") if c.findtext("country")})
         codes = {orgs.country_code(c) for c in countries} - {""}
         isrctn = t.findtext("isrctn") or ""
-        needs = {}
-        if codes and "IN" not in codes:
-            needs["geographic_gap"] = f"ISRCTN{isrctn} has no sites in India"
-        if codes and not (codes & orgs.ASIA):
-            needs["asia_absent"] = f"ISRCTN{isrctn} has no sites in Asia"
+        needs = {}                      # geography is judged later, against the supply
         enrol = t.findtext(".//targetEnrolment")
         start = (t.findtext(".//recruitmentStart") or t.findtext(".//overallStartDate") or "")[:10]
         phase = t.findtext(".//phase") or ""
@@ -180,9 +183,12 @@ def _as_list(x):
     return x if isinstance(x, list) else [x] if x else []
 
 
-def harvest_cordis(disease: str, limit: int, log, Signal, core: str) -> list:
-    q = f"contenttype='project' AND '{disease}' AND status='SIGNED'"
-    d = get(f"{CORDIS}?" + urllib.parse.urlencode({"q": q, "format": "json", "p": 1,
+def harvest_cordis(q, limit: int, log, Signal) -> list:
+    if not q.phrases:
+        return []
+    terms = " AND ".join(f"'{p}'" for p in q.phrases)
+    cq = f"contenttype='project' AND {terms} AND status='SIGNED'"
+    d = get(f"{CORDIS}?" + urllib.parse.urlencode({"q": cq, "format": "json", "p": 1,
                                                     "num": min(limit, 100)}))
     time.sleep(0.4)
     res = (d or {}).get("hits") or ((d or {}).get("result") or {}).get("hits") or {}
@@ -190,7 +196,7 @@ def harvest_cordis(disease: str, limit: int, log, Signal, core: str) -> list:
     for h in _as_list(res.get("hit")):
         p = h.get("project") or {}
         title, objective = p.get("title", ""), p.get("objective", "")
-        if not _is_about(core, title, p.get("keywords", "")) and objective.lower().count(core) < 2:
+        if not q.matches_title_or_body(f"{title} {p.get('keywords', '')}", objective):
             continue
         coord = next((o for o in _as_list((p.get("relations", {}).get("associations") or {})
                                           .get("organization"))
@@ -233,14 +239,17 @@ def _gtr(url: str):
         return None
 
 
-def harvest_ukri(disease: str, limit: int, log, Signal, core: str) -> list:
+def harvest_ukri(q, limit: int, log, Signal) -> list:
+    if not q.phrases:
+        return []
+    # GtR searches one phrase well; the rest are enforced by the relevance check.
     d = _gtr(f"{GTR}/projects?" + urllib.parse.urlencode(
-        {"q": f'"{disease}"', "f": "pro.a", "s": 100, "p": 1}))
+        {"q": f'"{q.phrases[0]}"', "f": "pro.a", "s": 100, "p": 1}))
     out = []
     for p in (d or {}).get("project") or []:
         if p.get("status") != "Active":
             continue
-        if not _is_about(core, p.get("title", "")) and (p.get("abstractText") or "").lower().count(core) < 2:
+        if not q.matches_title_or_body(p.get("title", ""), p.get("abstractText") or ""):
             continue
         links = (p.get("links") or {}).get("link") or []
         lead = next((l for l in links if l.get("rel") == "LEAD_ORG"), None)

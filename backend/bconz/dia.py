@@ -3,6 +3,8 @@
 DIA — Demand Intelligence Agent.
 
   python -m bconz.dia --disease "multiple myeloma" --out ./out_mm
+  python -m bconz.dia --disease "glaucoma" --data-type imaging --supply US --out ./out_gl
+  python -m bconz.dia --intervention "semaglutide" --data-type ehr --out ./out_sema
 
 WHAT THIS IS
     Finds organisations that have publicly stated they need data in a disease,
@@ -51,9 +53,10 @@ from typing import Callable
 
 from . import orgs
 from . import sources_eu_uk as eu_uk
+from .query import DATA_TYPES, SUPPLY, SearchQuery, core_term, supply_label, supply_pitch
 from .http import get
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 REPORTER = "https://api.reporter.nih.gov/v2/projects/search"
 CTGOV = "https://clinicaltrials.gov/api/v2/studies"
@@ -95,11 +98,20 @@ NEEDS: dict[str, tuple[str, float, list[str]]] = {
     "retrospective_only": (
         "prospective or richer data than a retrospective review", 0.25,
         [r"retrospective (nature|design|study|analysis)"]),
-    # Derived from trials, not text.
-    "geographic_gap": ("sites or evidence in India, where they have none", 0.25, []),
+    # Derived from trials, not text. "{supply}" is filled from the search.
+    "geographic_gap": ("sites or evidence in {supply}, where they have none", 0.25, []),
     "asia_absent": ("any Asian representation in their programme", 0.20, []),
-    "funded_programme": ("active funded work in this disease", 0.15, []),
+    "funded_programme": ("active funded work in this area", 0.15, []),
 }
+# Data types a paper says it lacks ("imaging data were not available").
+for _code, (_label, _q, _desc, _pats) in DATA_TYPES.items():
+    NEEDS[f"data_{_code}"] = (_desc, 0.45, _pats)
+
+
+def need_text(code: str, q: "SearchQuery") -> str:
+    if code == "geographic_gap" and q.worldwide:
+        return "evidence beyond the single region their programme covers"
+    return NEEDS[code][0].replace("{supply}", supply_label(q.supply))
 LIMITATION_QUERY = (
     '("single center" OR "single centre" OR "single-center" OR "single-centre" OR '
     '"external validation" OR "externally validated" OR "generalizability" OR '
@@ -112,7 +124,8 @@ SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
 # These phrases also appear in methods and results ("using real-world data from
 # the registry", "correlated with longer follow-up duration"), where they mean
 # the authors HAVE the data. Count them only in a sentence that frames a gap.
-NEEDS_CUE = {"real_world_data", "longitudinal_gap", "generalisability", "external_validation"}
+NEEDS_CUE = {"real_world_data", "longitudinal_gap", "generalisability", "external_validation",
+             *(f"data_{c}" for c in DATA_TYPES)}
 GAP_CUE = re.compile(
     r"\b(limit\w*|lack\w*|scarce|scarcity|insufficient|paucity|few|only|small|restricted|"
     r"needed|need|required|warrant\w*|should be|future|further|remain\w*|unknown|unclear|"
@@ -154,9 +167,9 @@ class Signal:
     extra: dict = field(default_factory=dict)
 
 
-def harvest_publications(disease: str, years: int, limit: int, log: Progress) -> list[Signal]:
+def harvest_publications(query: SearchQuery, years: int, limit: int, log: Progress) -> list[Signal]:
     since = date.today().year - years
-    q = (f'ABSTRACT:"{disease}" AND ABSTRACT:{LIMITATION_QUERY} '
+    q = (f'{query.epmc_clause()} AND ABSTRACT:{LIMITATION_QUERY} '
          f'AND PUB_YEAR:[{since} TO {date.today().year}] AND SRC:MED')
     out: list[Signal] = []
     cursor = "*"
@@ -214,30 +227,30 @@ def disease_core(disease: str) -> str:
     return core.lower()
 
 
-def grant_is_about(disease: str, title: str, abstract: str) -> bool:
+def grant_is_about(query: "SearchQuery | str", title: str, abstract: str) -> bool:
     """RePORTER's text search also matches a project's keyword terms, which
     pulls in work that merely cites the disease (a kidney-disease grant that
-    mentions Gaucher lipids). Keep a grant only if the disease is in its
-    title or recurs in its abstract."""
-    core = disease_core(disease)
-    return core in (title or "").lower() or (abstract or "").lower().count(core) >= 2
+    mentions Gaucher lipids). Keep a grant only if every searched phrase is in
+    its title or recurs in its abstract."""
+    return SearchQuery.of(query).matches_title_or_body(title, abstract)
 
 
-def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
+def harvest_grants(query: SearchQuery, limit: int, log: Progress) -> list[Signal]:
     out: list[Signal] = []
     offset = 0
     dropped = 0
+    criteria: dict = {"include_active_projects": True, "exclude_subprojects": False}
+    if query.phrases:
+        criteria["advanced_text_search"] = {"operator": "and",
+                                            "search_field": "projecttitle,terms,abstracttext",
+                                            "search_text": " ".join(query.phrases)}
+    if query.sponsor:
+        criteria["org_names"] = [query.sponsor]
     for _page in range(6):
         if len(out) >= limit:
             break
         d = get(REPORTER, data={
-            "criteria": {
-                "advanced_text_search": {"operator": "and",
-                                         "search_field": "projecttitle,terms,abstracttext",
-                                         "search_text": disease},
-                "include_active_projects": True,
-                "exclude_subprojects": False,
-            },
+            "criteria": criteria,
             "include_fields": ["ApplId", "ProjectNum", "ProjectTitle", "AwardAmount",
                                "ProjectStartDate", "ProjectEndDate", "ContactPiName",
                                "Organization", "AgencyIcAdmin", "FiscalYear",
@@ -253,7 +266,8 @@ def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
             name = orgs.registry_org_name(org.get("org_name") or "")
             if not name:
                 continue
-            if not grant_is_about(disease, r.get("project_title", ""), r.get("abstract_text", "")):
+            if query.phrases and not grant_is_about(query, r.get("project_title", ""),
+                                                    r.get("abstract_text", "")):
                 dropped += 1
                 continue
             pi = r.get("contact_pi_name") or ""
@@ -279,7 +293,7 @@ def harvest_grants(disease: str, limit: int, log: Progress) -> list[Signal]:
         if offset >= ((d or {}).get("meta") or {}).get("total", 0):
             break
     log(f"grants: {len(out)} active NIH projects ({dropped} dropped as only "
-        f"incidentally mentioning {disease})")
+        f"incidentally mentioning {query.label()})")
     return out[:limit]
 
 
@@ -287,12 +301,16 @@ PHASE_WEIGHT = {"PHASE4": 0.6, "PHASE3": 1.0, "PHASE2": 0.7, "PHASE1": 0.45,
                 "EARLY_PHASE1": 0.35}
 
 
-def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
+def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal]:
     out: list[Signal] = []
     token = None
+    facets = {"query.cond": query.disease, "query.intr": query.intervention,
+              "query.spons": query.sponsor,
+              "query.term": " AND ".join(f'"{t}"' for t in (query.biomarker, query.population) if t)}
+    facets = {k: v for k, v in facets.items() if v}
     while len(out) < limit:
         params = {
-            "query.cond": disease,
+            **facets,
             "filter.overallStatus": "RECRUITING,NOT_YET_RECRUITING,ACTIVE_NOT_RECRUITING",
             "pageSize": min(100, limit), "sort": "LastUpdatePostDate:desc",
             "fields": "NCTId,BriefTitle,LeadSponsorName,LeadSponsorClass,Phase,"
@@ -329,11 +347,7 @@ def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
                 person = person or spons.get("name", "")
                 if not sponsor:
                     continue
-            needs = {}
-            if codes and "IN" not in codes:
-                needs["geographic_gap"] = f"{nct} has no sites in India"
-            if codes and not (codes & orgs.ASIA):
-                needs["asia_absent"] = f"{nct} has no sites in Asia"
+            needs = {}                  # geography is judged later, against the supply
             # Sponsor country is not published; a single-country footprint is
             # the best public evidence of home jurisdiction.
             home = next(iter(codes)) if len(codes) == 1 else ""
@@ -359,6 +373,35 @@ def harvest_trials(disease: str, limit: int, log: Progress) -> list[Signal]:
             break
     log(f"trials: {len(out)} active studies")
     return out[:limit]
+
+
+REGION_OF = {c: r for r in ("US", "EU", "UK", "ASIA") for c in SUPPLY[r]["codes"]}
+
+
+def apply_geography(signals: list[Signal], query: SearchQuery) -> None:
+    """Judge each trial's site footprint against where BCONZ's data comes from.
+
+    Narrowed supply (e.g. US data): a trial with no sites there has a gap we
+    can fill. Worldwide supply: nearly every trial lacks *some* region, so the
+    signal is instead a footprint confined to one region. Registries that only
+    list their own region's sites (CTIS) never support a claim either way.
+    """
+    for s in signals:
+        if s.source != "trials" or s.extra.get("eu_only_registry"):
+            continue
+        codes = {orgs.country_code(c) for c in s.extra.get("countries") or []} - {""}
+        if not codes:
+            continue
+        tid = s.extra.get("nct") or s.extra.get("isrctn") or "this trial"
+        if query.worldwide:
+            regions = {REGION_OF[c] for c in codes if c in REGION_OF}
+            if len(regions) <= 1:
+                where = next(iter(regions), "one region")
+                s.needs["geographic_gap"] = f"{tid} recruits only in {SUPPLY.get(where, {}).get('label', where)}"
+        elif not codes & query.supply_codes:
+            s.needs["geographic_gap"] = f"{tid} has no sites in {supply_label(query.supply)}"
+        if ("IN" in query.supply or "ASIA" in query.supply or query.worldwide) and not codes & orgs.ASIA:
+            s.needs["asia_absent"] = f"{tid} has no sites in Asia"
 
 
 # ----------------------------------------------------------------- scoring
@@ -458,26 +501,30 @@ def diagnose(leads: list[Lead]) -> dict[str, dict]:
     return diag
 
 
-def opening_angle(lead: Lead) -> str:
+def opening_angle(lead: Lead, q: SearchQuery) -> str:
+    pitch = supply_pitch(q.supply)
     pub = next((s for s in lead.signals if s.source == "publications"), None)
     if pub:
-        code = next((c for c in NEEDS if c in pub.needs), None)
+        # Data-type needs first: they are the most specific thing we can offer.
+        code = next((c for c in sorted(pub.needs, key=lambda c: not c.startswith("data_"))
+                     if c in NEEDS), None)
         if code:
             return (f"Reference their paper \"{pub.title[:80]}\" and the limitation they "
-                    f"state — they need {NEEDS[code][0]}.")
+                    f"state — they need {need_text(code, q)}.")
     trial = next((s for s in lead.signals if s.source == "trials"
                   and "geographic_gap" in s.needs), None)
     if trial:
-        return (f"Their trial {trial.extra.get('nct')} has no Indian sites — offer "
-                f"feasibility and real-world evidence from Indian hospital networks.")
+        return (f"{trial.needs['geographic_gap']} — offer feasibility support and "
+                f"{pitch} to extend its evidence base.")
     grant = next((s for s in lead.signals if s.source == "grants"), None)
     if grant:
-        return (f"Reference the funded project \"{grant.title[:80]}\" and offer a cohort "
-                f"that extends it beyond its current data source.")
-    return "Introduce governed, research-ready clinical datasets from Indian hospital networks."
+        return (f"Reference the funded project \"{grant.title[:80]}\" and offer "
+                f"{pitch} that extend it beyond its current data source.")
+    return f"Introduce {pitch}."
 
 
-def build_leads(signals: list[Signal]) -> list[Lead]:
+def build_leads(signals: list[Signal], q: SearchQuery | None = None) -> list[Lead]:
+    q = q or SearchQuery()
     by_key: dict[str, Lead] = {}
     names: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for s in signals:
@@ -488,7 +535,7 @@ def build_leads(signals: list[Signal]) -> list[Lead]:
         lead.signals.append(s)
         names[k][orgs.display_name(s.org_raw)] += 1
         for code, text in s.needs.items():
-            lead.needs.setdefault(code, NEEDS[code][0])
+            lead.needs.setdefault(code, need_text(code, q))
             lead.evidence.setdefault(code, text)
 
     for k, lead in by_key.items():
@@ -517,7 +564,8 @@ def build_leads(signals: list[Signal]) -> list[Lead]:
     return list(by_key.values())
 
 
-def finalise(leads: list[Lead]) -> dict[str, dict]:
+def finalise(leads: list[Lead], q: SearchQuery | None = None) -> dict[str, dict]:
+    q = q or SearchQuery()
     diag = diagnose(leads)
     live = {d: w for d, w in DIM_WEIGHTS.items() if diag[d]["informative"]}
     total_w = sum(live.values()) or 1.0
@@ -536,10 +584,10 @@ def finalise(leads: list[Lead]) -> dict[str, dict]:
                                   f"({', '.join(lead.sources)})")
         for code in lead.needs:
             if NEEDS[code][2]:
-                lead.rationale.append(f"stated need: {NEEDS[code][0]}")
+                lead.rationale.append(f"stated need: {need_text(code, q)}")
         if "geographic_gap" in lead.needs:
-            lead.rationale.append("active programme with no Indian sites")
-        lead.opening_angle = opening_angle(lead)
+            lead.rationale.append(f"active programme needing {need_text('geographic_gap', q)}")
+        lead.opening_angle = opening_angle(lead, q)
     leads.sort(key=lambda l: l.score, reverse=True)
     return diag
 
@@ -549,29 +597,46 @@ def finalise(leads: list[Lead]) -> dict[str, dict]:
 REGIONS = ("us", "eu", "uk")
 
 
-def run(disease: str, years: int = 3, max_pubs: int = 200, max_grants: int = 100,
-        max_trials: int = 300, log: Progress | None = None,
+def run(query: "SearchQuery | str | dict", years: int = 3, max_pubs: int = 200,
+        max_grants: int = 100, max_trials: int = 300, log: Progress | None = None,
         regions: tuple[str, ...] | list[str] = REGIONS) -> dict:
-    """Harvest, merge, score. Returns the leads.json document."""
+    """Harvest, merge, score. Returns the leads.json document.
+
+    `query` is a SearchQuery (or a plain disease string, for compatibility).
+    `regions` picks which markets' registries to search; `query.supply` says
+    where the offered data comes from. They are independent: a US dataset can
+    be pitched to buyers found in EU registries.
+    """
     log = log or (lambda m: print(f"  {m}", file=sys.stderr))
-    core = disease_core(disease)
+    q = SearchQuery.of(query)
+    if q.empty:
+        raise ValueError("a search needs a disease, drug, biomarker or company")
+    log(f"searching: {q.label()} · offering data from {supply_label(q.supply)}")
     # Europe PMC and ClinicalTrials.gov are global; NIH funding is US-only.
-    signals = (harvest_publications(disease, years, max_pubs, log)
-               + (harvest_grants(disease, max_grants, log) if "us" in regions else [])
-               + harvest_trials(disease, max_trials, log))
+    signals = (harvest_publications(q, years, max_pubs, log)
+               + (harvest_grants(q, max_grants, log) if "us" in regions else [])
+               + harvest_trials(q, max_trials, log))
     # Europe and the UK. ClinicalTrials.gov goes first so it is canonical
     # when one trial is registered in several places.
     if "eu" in regions:
-        signals += (eu_uk.harvest_ctis(disease, max_trials, log, Signal, core)
-                    + eu_uk.harvest_cordis(disease, max_grants, log, Signal, core))
+        signals += (eu_uk.harvest_ctis(q, max_trials, log, Signal)
+                    + eu_uk.harvest_cordis(q, max_grants, log, Signal))
     if "uk" in regions:
-        signals += (eu_uk.harvest_isrctn(disease, max_trials, log, Signal, core)
-                    + eu_uk.harvest_ukri(disease, max_grants, log, Signal, core))
+        signals += (eu_uk.harvest_isrctn(q, max_trials, log, Signal)
+                    + eu_uk.harvest_ukri(q, max_grants, log, Signal))
     signals, dup = eu_uk.dedupe_trials(signals)
     if dup:
         log(f"merged {dup} trial(s) registered in more than one registry")
-    leads = build_leads(signals)
-    diag = finalise(leads)
+    if q.sponsor:
+        # Company search: keep only that organisation's signals, whatever the
+        # registry calls it.
+        want = orgs.org_key(q.sponsor)
+        before = len(signals)
+        signals = [s for s in signals if want in orgs.org_key(s.org_raw)]
+        log(f"company filter '{q.sponsor}': kept {len(signals)} of {before} signals")
+    apply_geography(signals, q)
+    leads = build_leads(signals, q)
+    diag = finalise(leads, q)
     for dim, d in diag.items():
         if not d["informative"]:
             log(f"diagnostic: {dim} distinct={d['distinct']} — not discriminating, "
@@ -581,7 +646,9 @@ def run(disease: str, years: int = 3, max_pubs: int = 200, max_grants: int = 100
         by_src[s.source] += 1
         by_registry[s.extra.get("registry") or "Europe PMC"] += 1
     return {
-        "disease": disease, "version": VERSION,
+        # "disease" stays the human label so existing consumers keep working.
+        "disease": q.label(), "query": q.to_dict(), "supply_pitch": supply_pitch(q.supply),
+        "version": VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {"signals": len(signals), "organisations": len(leads),
                     "by_source": dict(by_src), "by_registry": dict(by_registry),
@@ -660,16 +727,30 @@ def render(doc: dict, top: int = 60) -> str:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="DIA — who publicly needs data in a disease.")
-    ap.add_argument("--disease", required=True)
+    ap = argparse.ArgumentParser(description="DIA — who publicly needs data.")
+    ap.add_argument("--disease", default="")
+    ap.add_argument("--intervention", default="", help="drug, device or procedure")
+    ap.add_argument("--biomarker", default="", help="gene, mutation or marker")
+    ap.add_argument("--data-type", action="append", default=[], choices=sorted(DATA_TYPES))
+    ap.add_argument("--population", default="")
+    ap.add_argument("--sponsor", default="", help="company or institution")
+    ap.add_argument("--supply", action="append", default=[], choices=sorted(SUPPLY),
+                    help="where the offered data comes from (repeatable; default worldwide)")
+    ap.add_argument("--regions", default="us,eu,uk", help="registries to search")
     ap.add_argument("--out", type=Path, default=Path("./dia_out"))
     ap.add_argument("--years", type=int, default=3)
     ap.add_argument("--max-pubs", type=int, default=200)
     ap.add_argument("--max-grants", type=int, default=100)
     ap.add_argument("--max-trials", type=int, default=300)
     a = ap.parse_args(argv)
-    print(f"DIA v{VERSION} — {a.disease}", file=sys.stderr)
-    doc = run(a.disease, a.years, a.max_pubs, a.max_grants, a.max_trials)
+    q = SearchQuery(disease=a.disease, intervention=a.intervention, biomarker=a.biomarker,
+                    data_types=a.data_type, population=a.population, sponsor=a.sponsor,
+                    supply=a.supply)
+    if q.empty:
+        ap.error("give at least one of --disease, --intervention, --biomarker, --sponsor")
+    print(f"DIA v{VERSION} — {q.label()}", file=sys.stderr)
+    doc = run(q, a.years, a.max_pubs, a.max_grants, a.max_trials,
+              regions=[r for r in a.regions.split(",") if r])
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "leads.json").write_text(json.dumps(doc, indent=2, default=str), encoding="utf-8")
     (a.out / "leads.html").write_text(render(doc), encoding="utf-8")

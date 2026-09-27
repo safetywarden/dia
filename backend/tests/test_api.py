@@ -57,6 +57,35 @@ def test_markets_are_recorded_and_required(client):
     assert client.post("/runs", json={"disease": "Gaucher disease", "regions": ["xx"]}).status_code == 422
 
 
+def test_faceted_search_is_stored_and_labelled(client):
+    r = client.post("/runs", json={"disease": "glaucoma", "data_types": ["imaging", "bogus"],
+                                   "supply": ["US"]}).json()
+    assert r["disease"] == "glaucoma · imaging data"
+    assert r["params"]["query"]["data_types"] == ["imaging"]
+    assert r["params"]["query"]["supply"] == ["US"]
+    # Data type alone is not a search.
+    assert client.post("/runs", json={"data_types": ["imaging"]}).status_code == 422
+    opts = client.get("/options").json()
+    assert "imaging" in opts["data_types"] and "US" in opts["supply"]
+
+
+def test_new_column_added_to_existing_database(tmp_path, monkeypatch):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)   # a watches table from before `query` existed
+    con.execute("CREATE TABLE watches (id INTEGER PRIMARY KEY, disease VARCHAR(200) UNIQUE, "
+                "interval_days INTEGER, active BOOLEAN, seen_signals JSON, "
+                "last_run_at DATETIME, created_by VARCHAR(200), created_at DATETIME)")
+    con.commit(); con.close()
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
+    from app import db
+    importlib.reload(db)
+    db.init()
+    cols = [r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(watches)")]
+    assert "query" in cols
+    db.init()                                   # second start: no error, no duplicate
+
+
 def test_auth_required(client):
     assert client.get("/runs", headers={"Authorization": "Bearer nope"}).status_code == 401
     assert client.get("/health").status_code == 200

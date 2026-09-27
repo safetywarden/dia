@@ -8,7 +8,23 @@ export type Run = {
   created_by: string; watch_id: number | null; created_at: string; finished_at: string | null;
   diagnostics?: Record<string, { distinct: number; iqr: number; informative: boolean }>;
   progress?: string[]; error?: string;
+  params?: { regions?: string[]; query?: SearchQuery; top_contacts?: number };
 };
+
+export type SearchQuery = {
+  disease: string; intervention: string; biomarker: string; data_types: string[];
+  population: string; sponsor: string; supply: string[];
+};
+
+export const DATA_TYPES: [string, string][] = [
+  ["genomic", "Genomic / sequencing"], ["imaging", "Imaging"], ["ehr", "EHR / longitudinal"],
+  ["claims", "Claims"], ["biobank", "Biobank / samples"], ["device", "Device / wearable"],
+  ["pro", "Patient-reported outcomes"],
+];
+
+export const ORIGINS: [string, string][] = [
+  ["US", "United States"], ["EU", "Europe"], ["UK", "UK"], ["IN", "India"], ["ASIA", "Asia"],
+];
 
 export type Signal = {
   source: "publications" | "grants" | "trials"; date: string; title: string; url: string;

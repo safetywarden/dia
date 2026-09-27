@@ -118,6 +118,7 @@ class Watch(Base):
     interval_days: Mapped[int] = mapped_column(Integer, default=7)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     seen_signals: Mapped[list] = mapped_column(JSON, default=list)   # signal URLs
+    query: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # full SearchQuery
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -125,7 +126,22 @@ class Watch(Base):
 
 def init() -> None:
     Base.metadata.create_all(engine)
+    _add_missing_columns()
     migrate_from_legacy()
+
+
+def _add_missing_columns() -> None:
+    """create_all never alters an existing table. Add columns introduced after
+    a table was first created (nullable only, so this is always safe)."""
+    from sqlalchemy import inspect, text
+
+    added = {("watches", "query"): "JSON"}
+    have = {t: {c["name"] for c in inspect(engine).get_columns(t)}
+            for t in {t for t, _ in added}}
+    with engine.begin() as c:
+        for (table, col), typ in added.items():
+            if col not in have[table]:
+                c.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
 
 
 # Parents before children, so foreign keys hold during the copy.

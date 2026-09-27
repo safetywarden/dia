@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 
 from bconz import dia, pcia
+from bconz.query import DATA_TYPES, SUPPLY, SearchQuery
 
 from . import db, worker
 
@@ -61,7 +62,16 @@ def user(authorization: str = Header(default=""),
 # ------------------------------------------------------------------ schemas
 
 class RunIn(BaseModel):
-    disease: str = Field(min_length=3, max_length=200)
+    # Any combination of facets; at least one of disease, intervention,
+    # biomarker or sponsor. See bconz/query.py.
+    disease: str = Field("", max_length=200)
+    intervention: str = Field("", max_length=200)
+    biomarker: str = Field("", max_length=200)
+    data_types: list[str] = Field(default_factory=list)
+    population: str = Field("", max_length=120)
+    sponsor: str = Field("", max_length=200)
+    # Where the offered data comes from; default worldwide.
+    supply: list[str] = Field(default_factory=list)
     top_contacts: int = Field(20, ge=0, le=60)
     years: int = Field(3, ge=1, le=10)
     # Markets whose registries to search. Europe PMC and ClinicalTrials.gov are
@@ -75,16 +85,18 @@ class SuppressIn(BaseModel):
 
 
 class WatchIn(BaseModel):
-    disease: str = Field(min_length=3, max_length=200)
+    disease: str = Field(min_length=3, max_length=200)     # the search's label
     interval_days: int = Field(7, ge=1, le=90)
+    query: dict | None = None                               # full query, when faceted
+    regions: list[str] | None = None
 
 
 def run_out(r: db.Run, full: bool = False) -> dict:
     out = {"id": r.id, "disease": r.disease, "status": r.status, "summary": r.summary,
            "created_by": r.created_by, "watch_id": r.watch_id,
-           "created_at": r.created_at, "finished_at": r.finished_at}
+           "created_at": r.created_at, "finished_at": r.finished_at, "params": r.params}
     if full:
-        out |= {"diagnostics": r.diagnostics, "progress": r.progress, "params": r.params,
+        out |= {"diagnostics": r.diagnostics, "progress": r.progress,
                 "error": r.error.splitlines()[0] if r.error else ""}
     return out
 
@@ -98,6 +110,14 @@ def _run(s, run_id: int) -> db.Run:
 
 # ------------------------------------------------------------------- routes
 
+@app.get("/options")
+def options(_: str = Depends(user)):
+    """Vocabulary for the search form, so the web app never drifts from the engine."""
+    return {"data_types": {k: v[0] for k, v in DATA_TYPES.items()},
+            "supply": {k: v["label"] for k, v in SUPPLY.items()},
+            "regions": list(dia.REGIONS)}
+
+
 @app.get("/health")
 def health():
     with db.Session() as s:
@@ -109,10 +129,15 @@ def health():
 def create_run(body: RunIn, who: str = Depends(user)):
     if not body.regions:
         raise HTTPException(422, "choose at least one market")
+    q = SearchQuery(disease=body.disease, intervention=body.intervention,
+                    biomarker=body.biomarker, data_types=body.data_types,
+                    population=body.population, sponsor=body.sponsor, supply=body.supply)
+    if q.empty:
+        raise HTTPException(422, "give a disease, drug, biomarker or company")
     with db.Session() as s:
-        r = db.Run(disease=body.disease.strip(), created_by=who,
+        r = db.Run(disease=q.label()[:200], created_by=who,
                    params={"top_contacts": body.top_contacts, "years": body.years,
-                           "regions": sorted(set(body.regions))})
+                           "regions": sorted(set(body.regions)), "query": q.to_dict()})
         s.add(r)
         s.commit()
         return run_out(r, full=True)
@@ -258,11 +283,13 @@ def add_watch(body: WatchIn, who: str = Depends(user)):
     with db.Session() as s:
         w = s.scalar(select(db.Watch).where(func.lower(db.Watch.disease)
                                             == body.disease.strip().lower()))
+        query = {**(body.query or {}), "_regions": body.regions} if body.query else None
         if w:
             w.active, w.interval_days = True, body.interval_days
+            w.query = query or w.query
         else:
             w = db.Watch(disease=body.disease.strip(), interval_days=body.interval_days,
-                         created_by=who)
+                         created_by=who, query=query)
             s.add(w)
         s.commit()
         return {"id": w.id, "disease": w.disease, "interval_days": w.interval_days}

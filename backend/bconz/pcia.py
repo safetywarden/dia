@@ -535,7 +535,11 @@ def load_suppression(path: Path | None) -> set[str]:
 
 # --------------------------------------------------------------- the outreach
 
-def draft_opening(rec: ContactRecord, lead: dict) -> str:
+DEFAULT_PITCH = ("governed, research-ready clinical datasets, sourced directly and "
+                 "through partner networks worldwide")
+
+
+def draft_opening(rec: ContactRecord, lead: dict, pitch: str = DEFAULT_PITCH) -> str:
     """One sentence, built from what THEY published, not a template.
 
     The whole point of sourcing contacts this way is that the person found is
@@ -547,22 +551,20 @@ def draft_opening(rec: ContactRecord, lead: dict) -> str:
                 if s.get("source") == "publications"), None)
     if pub and need_text:
         return (f"You noted in \"{pub.get('title','')[:70]}\" that the work needs "
-                f"{need_text}. We assemble governed, research-ready clinical "
-                f"datasets from Indian hospital networks and may be able to help.")
+                f"{need_text}. BCONZ provides {pitch} and may be able to help.")
     trial = next((s for s in lead.get("signals", [])
                   if s.get("source") == "trials"), None)
     if trial:
-        return (f"Your programme {trial.get('extra', {}).get('nct', '')} currently has "
-                f"no Indian sites. We work with Indian hospital networks on governed "
-                f"real-world data and feasibility.")
+        gap = (trial.get("needs") or {}).get("geographic_gap")
+        tid = trial.get("extra", {}).get("nct") or trial.get("extra", {}).get("isrctn") or ""
+        lead_in = f"{gap}." if gap else f"Regarding your programme {tid}."
+        return f"{lead_in} BCONZ provides {pitch} and feasibility support to extend its evidence."
     grant = next((s for s in lead.get("signals", [])
                   if s.get("source") == "grants"), None)
     if grant:
-        return (f"Regarding your funded project \"{grant.get('title','')[:70]}\" — we "
-                f"assemble governed clinical datasets from Indian hospital networks "
-                f"that could extend its data base.")
-    return ("We assemble governed, research-ready clinical datasets from Indian "
-            "hospital networks.")
+        return (f"Regarding your funded project \"{grant.get('title','')[:70]}\" — BCONZ "
+                f"provides {pitch} that could extend its data base.")
+    return f"BCONZ provides {pitch}."
 
 
 # -------------------------------------------------------------------- report
@@ -598,7 +600,8 @@ color:var(--mut);font-size:12px}
 """
 
 
-def render(recs: list[ContactRecord], leads_by_key: dict, disease: str) -> str:
+def render(recs: list[ContactRecord], leads_by_key: dict, disease: str,
+           pitch: str = DEFAULT_PITCH) -> str:
     e = html.escape
     ok = [r for r in recs if r.exportable]
     blocked = [r for r in recs if not r.exportable]
@@ -637,7 +640,7 @@ def render(recs: list[ContactRecord], leads_by_key: dict, disease: str) -> str:
                  f"<strong>Basis</strong> {e(r.provenance.lawful_basis)}<br>"
                  f"<q>{e(r.provenance.verbatim_snippet[:240])}</q></div>"
                  f"<div class='angle'><strong>Opening.</strong> "
-                 f"{e(draft_opening(r, lead))}</div></div>")
+                 f"{e(draft_opening(r, lead, pitch))}</div></div>")
 
     if blocked:
         p.append("<h2>Named, but no published contact</h2>"
@@ -783,7 +786,8 @@ def main(argv=None) -> int:
 
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "contacts.html").write_text(
-        render(uniq, leads_by_key, disease), encoding="utf-8")
+        render(uniq, leads_by_key, disease, data.get("supply_pitch") or DEFAULT_PITCH),
+        encoding="utf-8")
     (a.out / "contacts.json").write_text(
         json.dumps(to_json(uniq, disease), indent=2, default=str), encoding="utf-8")
     n, excluded = export_csv(uniq, a.out / "contactable.csv")
