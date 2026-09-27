@@ -74,5 +74,25 @@ def test_data_type_needs(sentence, code):
     assert code in dia.detect_needs(sentence)
 
 
+def test_passing_mention_is_not_a_paper_about_the_disease():
+    q = SearchQuery(disease="chronic kidney disease")
+    assert not q.matches_title_or_body(
+        "Outcomes of staged versus primary major amputation",
+        "Patients with diabetes, chronic kidney disease and heart failure were included.")
+    assert q.matches_title_or_body("Progression of chronic kidney disease in adults", "")
+    assert q.matches_title_or_body("Kidney outcomes", "In chronic kidney disease … chronic kidney disease")
+
+
+def test_titles_lose_markup():
+    assert dia.clean_text("Diagnostic [&lt;sup&gt;68&lt;/sup&gt;Ga]Ga-FAPI PET") == "Diagnostic [68Ga]Ga-FAPI PET"
+
+
+def test_academic_name_beats_a_wrong_industry_class():
+    from bconz.orgs import org_type
+    assert org_type("Stanford University", "INDUSTRY") == "academic"
+    assert org_type("Novartis Pharmaceuticals", "INDUSTRY") == "industry"
+    assert org_type("Janssen Research & Development", "INDUSTRY") == "industry"
+
+
 def test_data_type_need_requires_a_gap():
     assert "data_imaging" not in dia.detect_needs("We analysed OCT imaging data from 400 eyes.")

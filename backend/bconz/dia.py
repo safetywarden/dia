@@ -167,6 +167,12 @@ class Signal:
     extra: dict = field(default_factory=dict)
 
 
+def clean_text(s: str) -> str:
+    """Registry text arrives with markup and entities ("[&lt;sup&gt;68&lt;/sup&gt;Ga]")."""
+    s = html.unescape(html.unescape(s or ""))
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
+
+
 def harvest_publications(query: SearchQuery, years: int, limit: int, log: Progress) -> list[Signal]:
     since = date.today().year - years
     q = (f'{query.epmc_clause()} AND ABSTRACT:{LIMITATION_QUERY} '
@@ -183,7 +189,12 @@ def harvest_publications(query: SearchQuery, years: int, limit: int, log: Progre
             break
         res = (d.get("resultList") or {}).get("result", [])
         for r in res:
-            abstract = re.sub(r"<[^>]+>", " ", r.get("abstractText", "") or "")
+            abstract = clean_text(r.get("abstractText", ""))
+            title = clean_text(r.get("title", ""))
+            # An abstract that mentions the disease once ("…including patients
+            # with chronic kidney disease") is not a paper about it.
+            if not query.matches_title_or_body(title, abstract):
+                continue
             needs = detect_needs(abstract)
             if not needs:
                 continue            # topical but no stated gap: not a lead
@@ -205,7 +216,7 @@ def harvest_publications(query: SearchQuery, years: int, limit: int, log: Progre
             out.append(Signal(
                 source="publications", org_raw=inst,
                 date=r.get("firstPublicationDate", "") or "",
-                title=(r.get("title") or "").strip().rstrip("."),
+                title=title.rstrip("."),
                 url=f"https://europepmc.org/article/MED/{pmid}" if pmid else
                     f"https://europepmc.org/article/{r.get('source','')}/{r.get('id','')}",
                 snippet=snippet, person=first, person_role="first author",
@@ -347,6 +358,7 @@ def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal
                 person = person or spons.get("name", "")
                 if not sponsor:
                     continue
+                spons = {**spons, "class": ""}      # the class described the person
             needs = {}                  # geography is judged later, against the supply
             # Sponsor country is not published; a single-country footprint is
             # the best public evidence of home jurisdiction.
@@ -354,7 +366,7 @@ def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal
             out.append(Signal(
                 source="trials", org_raw=sponsor,
                 date=(status.get("startDateStruct") or {}).get("date", ""),
-                title=ident.get("briefTitle", ""),
+                title=clean_text(ident.get("briefTitle", "")),
                 url=f"https://clinicaltrials.gov/study/{nct}",
                 snippet=f"Sponsor of {nct}, {'/'.join(phases) or 'NA'}, status "
                         f"{status.get('overallStatus','')}"
@@ -542,8 +554,9 @@ def build_leads(signals: list[Signal], q: SearchQuery | None = None) -> list[Lea
         # Unabbreviated spelling first ("Institute" over NIH's "Inst"), then the
         # most frequent, then the longest.
         abbrev = re.compile(r"\b(inst|univ|ctr|hosp|med|natl|sch)\b\.?", re.I)
+        school = re.compile(r"\b(school of medicine|medical school|college of medicine)\b", re.I)
         lead.org_display = max(names[k].items(), key=lambda kv: (
-            not abbrev.search(kv[0]), kv[1], len(kv[0])))[0]
+            not abbrev.search(kv[0]), not school.search(kv[0]), kv[1], len(kv[0])))[0]
         sc = next((s.sponsor_class for s in lead.signals if s.sponsor_class), "")
         lead.org_type = orgs.org_type(lead.org_display, sc)
         # A company's trial footprint says nothing about where it is based, so

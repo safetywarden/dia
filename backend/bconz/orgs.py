@@ -307,8 +307,16 @@ def country_code(text: str) -> str:
     return ""
 
 
+ACADEMIC_NAME = re.compile(r"\b(universit\w*|hospital\w*|school of|college|institute of|"
+                           r"medical cent(er|re)|clinic)\b", re.I)
+
+
 def org_type(name: str, sponsor_class: str = "") -> str:
     sc = (sponsor_class or "").upper()
+    # Registries sometimes class a university sponsor as INDUSTRY; a name that
+    # is plainly academic or clinical wins over the class.
+    if sc == "INDUSTRY" and ACADEMIC_NAME.search(name or "") and not KNOWN_INDUSTRY.search(name or ""):
+        sc = ""
     if sc == "INDUSTRY" or KNOWN_INDUSTRY.search(name or "") or re.search(
             r"\b(inc|ltd|llc|gmbh|plc|pharma\w*|therapeutics|biotech\w*|"
             r"biosciences?)\b", name or "", re.I):
