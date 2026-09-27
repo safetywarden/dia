@@ -31,7 +31,7 @@ def test_unknown_attributes_never_count_as_a_match():
 
 def test_strong_needs_a_stated_gap_not_just_geography():
     geo_only = match_lead(lead("geographic_gap", "asia_absent"), US_EHR, W)
-    assert geo_only["label"] != "Strong"
+    assert geo_only["label"] == "Geographic opening"
     strong = match_lead(lead("geographic_gap", "single_centre", "small_sample"), US_EHR, W)
     assert strong["label"] == "Strong"
 
@@ -53,7 +53,7 @@ def test_ranking_prefers_fit_then_demand():
            "summary": {}}
     apply_fit(doc, US_EHR, W)
     assert doc["leads"][0]["fit"]["label"] == "Strong"
-    assert doc["summary"]["fit"] == {"Strong": 1, "Partial": 0, "Context only": 1}
+    assert doc["summary"]["fit"] == {"Strong": 1, "Partial": 0, "Geographic opening": 0, "Context only": 1}
 
 
 def test_from_harm_reads_only_aggregates():
@@ -66,3 +66,9 @@ def test_from_harm_reads_only_aggregates():
     assert p.patients == 18000 and p.data_types == ["ehr"] and p.followup_median_years == 4.0
     assert p.disease_patients == {"glaucoma": 2400} and p.coding == ["ICD"]
     assert p.sites is None and p.diverse is None          # HARM cannot establish these
+
+
+def test_geography_alone_is_not_a_fit():
+    f = match_lead(lead("geographic_gap"), US_EHR, W)
+    assert f["met"] and f["label"] == "Geographic opening"
+    assert match_lead(lead("geographic_gap", "longitudinal_gap"), US_EHR, W)["label"] == "Partial"

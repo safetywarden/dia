@@ -26,6 +26,9 @@ from bconz.orgs import country_code, institution_from_affiliation as inst, org_k
     ('Servicio de Hematología, Hospital Universitario "12 de Octubre", Madrid',
      "Hospital Universitario 12 de Octubre"),
     ("Hemostaseology and Medical Oncology, Innsbruck, Austria", ""),
+    ("Department of Psychology, City University of New York, New York, NY", "City University of New York"),
+    ("Department of Ophthalmology, All India Institute of Medical Sciences, New Delhi, India",
+     "All India Institute of Medical Sciences"),
     ("II. Medical Clinic, University Medical Center Hamburg-Eppendorf, Hamburg",
      "University Medical Center Hamburg-Eppendorf"),
 ])

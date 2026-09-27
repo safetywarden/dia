@@ -45,7 +45,7 @@ export type Lead = {
 };
 
 export type FitRow = { need: string; text: string; evidence: string; why: string };
-export type Fit = { score: number; label: "Strong" | "Partial" | "Context only"; summary: string;
+export type Fit = { score: number; label: "Strong" | "Partial" | "Geographic opening" | "Context only"; summary: string;
   met: FitRow[]; unmet: FitRow[]; unknown: FitRow[] };
 
 export type DatasetProfile = {

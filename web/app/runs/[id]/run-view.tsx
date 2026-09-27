@@ -90,7 +90,8 @@ export default function RunView({ id }: { id: number }) {
         <>
           <div className="tiles">
             <Tile n={s.organisations} l="Organisations" />
-            {s.fit && <><Tile n={s.fit.Strong} l="Strong fit" /><Tile n={s.fit.Partial} l="Partial fit" /></>}
+            {s.fit && <><Tile n={s.fit.Strong} l="Strong fit" /><Tile n={s.fit.Partial} l="Partial fit" />
+              <Tile n={s.fit["Geographic opening"]} l="Geographic opening" /></>}
             <Tile n={s.tiers?.A} l="Tier A" />
             <Tile n={s.tiers?.B} l="Tier B" />
             <Tile n={s.signals} l="Signals" />
@@ -147,7 +148,7 @@ function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
         {["A", "B", "C"].map((t) => (
           <button key={t} className="chip" aria-pressed={tiers.has(t)} onClick={() => toggle(t)}>Tier {t}</button>
         ))}
-        {isMatch && <button className="chip" aria-pressed={fitOnly} onClick={() => setFitOnly(!fitOnly)}>Strong or partial fit</button>}
+        {isMatch && <button className="chip" aria-pressed={fitOnly} onClick={() => setFitOnly(!fitOnly)}>Hide context-only</button>}
         <button className="chip" aria-pressed={stated} onClick={() => setStated(!stated)}>Stated a data gap</button>
         {anyNew && <button className="chip" aria-pressed={newOnly} onClick={() => setNewOnly(!newOnly)}>New only</button>}
         <select value={type} onChange={(e) => setType(e.target.value)} style={{ width: "auto" }}>
@@ -222,12 +223,12 @@ function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: num
   );
 }
 
-const FIT_CLASS: Record<string, string> = { Strong: "tA", Partial: "tB", "Context only": "tC" };
+const FIT_CLASS: Record<string, string> = { Strong: "tA", Partial: "tB", "Geographic opening": "tB", "Context only": "tC" };
 
 function FitBlock({ fit }: { fit: NonNullable<Lead["fit"]> }) {
   return (
     <div className="fit">
-      <div><span className={`pill ${FIT_CLASS[fit.label]}`}>{fit.label} fit</span>{" "}
+      <div><span className={`pill ${FIT_CLASS[fit.label]}`}>{fit.label === "Geographic opening" ? fit.label : `${fit.label} fit`}</span>{" "}
         <span className="muted small">{fit.summary} by this dataset</span></div>
       <ul>
         {fit.met.map((r) => <li key={r.need} className="met">✓ Needs {r.text} — <strong>{r.why}</strong></li>)}

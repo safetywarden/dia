@@ -92,6 +92,9 @@ ORDINAL = re.compile(r"^([IVX]{1,4}\.?|\d+(st|nd|rd|th)?\.?|first|second|third|f
                      r"fifth)\s", re.I)
 HEAD_ADJ = re.compile(r"^(medical|universitario|universitaria|universitaire|"
                       r"university|general|clinical|teaching|national)$", re.I)
+PLACE_PREFIX = re.compile(r"^(New|San|Santa|Los|Las|Saint|St\.?|Hong|South|North|West|East|Rio|Sao|São|"
+                          r"Buenos|Kuala|Tel|Abu|Port|Salt|Baton|Des|Fort|Little)$")
+NAME_TAIL = re.compile(r"^(Sciences?|Technology|Medicine|Research|Health)$")
 CONNECT = {"of", "at", "for", "de", "di", "del", "der", "des", "du", "la", "le", "da"}
 GENERIC = re.compile(r"^((school|college|faculty) of [\w ]+|[\w ]+ (division|department|"
                      r"program|unit)|medical school|graduate school)$", re.I)
@@ -115,6 +118,9 @@ def _phrase_around(words: list[str], i: int) -> str:
         if w.lower() in CONNECT and hi + 2 < len(words) and words[hi + 2][:1].isupper() \
                 and not SUBUNIT_WORD.match(words[hi + 2]):
             hi += 2
+            # Two-word place names and "X Sciences": "of New York", "of Medical Sciences".
+            if hi + 1 < len(words) and (PLACE_PREFIX.match(words[hi]) or NAME_TAIL.match(words[hi + 1])):
+                hi += 1
         elif re.match(r"^(Cancer|Medical|Research|Nacional|National|General|Memorial|"
                       r"Comprehensive|Children'?s)$", w) or TIER1.match(w) or TIER2.match(w):
             hi += 1

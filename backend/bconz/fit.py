@@ -75,7 +75,7 @@ def _judge(code: str, p: DatasetProfile, disease: str | None) -> tuple[str, str]
     realworld = bool({"ehr", "claims"} & set(p.data_types))
     if code.startswith("data_"):
         t = code[5:]
-        label = DATA_TYPES[t][0].lower()
+        label = DATA_TYPES[t][0]
         if t in p.data_types:
             return "met", f"dataset includes {label} data"
         if not p.data_types:
@@ -155,9 +155,15 @@ def match_lead(lead: dict, p: DatasetProfile, weights: dict[str, float]) -> dict
     for r in rows["met"]:
         miss *= 1 - weights.get(r["need"], 0.2)
     score = 1 - miss if rows["met"] else 0.0
+    # Geography is met by construction for any dataset from the right place, so
+    # a fit must rest on at least one need the organisation actually stated.
     text_met = [r for r in rows["met"] if r["need"] not in ("geographic_gap", "asia_absent")]
-    label = ("Strong" if len(rows["met"]) >= 2 and text_met else
-             "Partial" if rows["met"] else "Context only")
+    # A programme with no sites where this data comes from is a commercial opening
+    # in its own right (e.g. US evidence for an FDA filing) -- but a different kind
+    # of fit from a stated data gap, so it gets its own label rather than "Partial".
+    geo = any(r["need"] == "geographic_gap" for r in rows["met"])
+    label = ("Strong" if len(text_met) >= 2 or (text_met and len(rows["met"]) >= 3) else
+             "Partial" if text_met else "Geographic opening" if geo else "Context only")
     return {"score": round(score, 3), "label": label, **rows,
             "summary": f"{len(rows['met'])} of {sum(len(v) for v in rows.values())} stated needs met"}
 
@@ -170,7 +176,8 @@ def apply_fit(doc: dict, p: DatasetProfile, weights: dict[str, float]) -> dict:
     doc["leads"].sort(key=lambda l: (l["match_score"], l["score"]), reverse=True)
     doc["dataset"] = p.to_dict()
     labels = [l["fit"]["label"] for l in doc["leads"]]
-    doc["summary"]["fit"] = {k: labels.count(k) for k in ("Strong", "Partial", "Context only")}
+    doc["summary"]["fit"] = {k: labels.count(k)
+                             for k in ("Strong", "Partial", "Geographic opening", "Context only")}
     return doc
 
 
