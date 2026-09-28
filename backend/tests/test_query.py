@@ -96,3 +96,21 @@ def test_academic_name_beats_a_wrong_industry_class():
 
 def test_data_type_need_requires_a_gap():
     assert "data_imaging" not in dia.detect_needs("We analysed OCT imaging data from 400 eyes.")
+
+
+def test_trials_respect_data_type_focus(monkeypatch):
+    """ClinicalTrials.gov can't filter by data type; the harvester must."""
+    def study(nct, title, summary=""):
+        return {"protocolSection": {"identificationModule": {"nctId": nct, "briefTitle": title},
+                                    "descriptionModule": {"briefSummary": summary},
+                                    "sponsorCollaboratorsModule": {"leadSponsor": {"name": "Acme Pharma Inc", "class": "INDUSTRY"}},
+                                    "contactsLocationsModule": {"locations": [{"country": "United States"}]}}}
+    page = {"studies": [study("NCT1", "Drug X versus placebo in pneumonia"),
+                        study("NCT2", "Deep learning on chest X-ray for pneumonia detection"),
+                        study("NCT3", "AI triage", "Uses chest radiographs to detect pneumonia")]}
+    monkeypatch.setattr(dia, "get", lambda *a, **k: page)
+    monkeypatch.setattr(dia.time, "sleep", lambda s: None)
+    q = SearchQuery(disease="pneumonia", data_types=["imaging"])
+    got = [s.extra["nct"] for s in dia.harvest_trials(q, 10, lambda m: None)]
+    assert got == ["NCT2", "NCT3"]
+    assert len(dia.harvest_trials(SearchQuery(disease="pneumonia"), 10, lambda m: None)) == 3

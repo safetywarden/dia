@@ -315,6 +315,7 @@ PHASE_WEIGHT = {"PHASE4": 0.6, "PHASE3": 1.0, "PHASE2": 0.7, "PHASE1": 0.45,
 def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal]:
     out: list[Signal] = []
     token = None
+    skipped_focus = 0
     facets = {"query.cond": query.disease, "query.intr": query.intervention,
               "query.spons": query.sponsor,
               "query.term": " AND ".join(f'"{t}"' for t in (query.biomarker, query.population) if t)}
@@ -327,7 +328,8 @@ def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal
             "fields": "NCTId,BriefTitle,LeadSponsorName,LeadSponsorClass,Phase,"
                       "OverallStatus,EnrollmentCount,StartDate,LocationCountry,"
                       "OverallOfficialName,OverallOfficialAffiliation,"
-                      "CentralContactName,SecondaryId"}
+                      "CentralContactName,SecondaryId,OfficialTitle,BriefSummary,"
+                      "InterventionName"}
         if token:
             params["pageToken"] = token
         d = get(CTGOV + "?" + urllib.parse.urlencode(params))
@@ -337,6 +339,18 @@ def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal
         for s in d.get("studies", []):
             ps = s.get("protocolSection", {})
             ident = ps.get("identificationModule", {})
+            if query.data_types:
+                # ClinicalTrials.gov cannot filter by data type, so a data-type
+                # search (e.g. an imaging archive) would otherwise pull in every
+                # drug trial in the disease. Keep a trial only if its own title,
+                # summary or interventions mention the data type.
+                desc = (ps.get("descriptionModule") or {}).get("briefSummary", "")
+                interventions = " ".join(i.get("name", "") for i in
+                                         (ps.get("armsInterventionsModule") or {}).get("interventions") or [])
+                if not query.matches(ident.get("briefTitle", ""), ident.get("officialTitle", ""),
+                                     desc, interventions):
+                    skipped_focus += 1
+                    continue
             spons = (ps.get("sponsorCollaboratorsModule", {}) or {}).get("leadSponsor", {})
             design = ps.get("designModule", {}) or {}
             status = ps.get("statusModule", {}) or {}
@@ -383,7 +397,8 @@ def harvest_trials(query: SearchQuery, limit: int, log: Progress) -> list[Signal
         token = d.get("nextPageToken")
         if not token:
             break
-    log(f"trials: {len(out)} active studies")
+    log(f"trials: {len(out)} active studies"
+        + (f" ({skipped_focus} skipped: no mention of {', '.join(query.data_types)})" if skipped_focus else ""))
     return out[:limit]
 
 
