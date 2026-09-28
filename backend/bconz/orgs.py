@@ -373,13 +373,13 @@ LARGE = {
                r"agfa|konica minolta|shimadzu|esaote|neusoft|wipro ge|becton|baxter|edwards|intuitive|"
                r"varian|elekta|bracco|guerbet|hitachi|toshiba|nihon kohden|terumo|dr[aä]ger|resmed|"
                r"allengers|skanray|trivitron",
-    "cro": r"iqvia|icon plc|parexel|\bppd\b|syneos|labcorp|covance|medpace|fortrea|wuxi|pharmaron|syngene|"
+    "cro": r"iqvia|icon plc|parexel|\bppd\b|syneos|labcorp|covance|medpace|fortrea|wuxi apptec|wuxi biologics|pharmaron|syngene|"
            r"clario|bioclinica|imaging endpoints|perceptive|calyx|novotech|tigermed|veristat|worldwide clinical",
     "bigtech": r"google|alphabet|deepmind|microsoft|amazon|\baws\b|meta platforms|apple inc|nvidia|\bibm\b|"
                r"oracle|tencent|alibaba|baidu|huawei|samsung electronics|intel corp",
 }
-LARGE_RX = {k: re.compile(rf"\b({v})", re.I) for k, v in LARGE.items()}
-KNOWN_LARGE = re.compile("|".join(f"({v})" for v in LARGE.values()), re.I)
+LARGE_RX = {k: re.compile(rf"\b({v})(?!\w)", re.I) for k, v in LARGE.items()}
+KNOWN_LARGE = re.compile(r"\b(" + "|".join(f"({v})" for v in LARGE.values()) + r")(?!\w)", re.I)
 
 BUYER_LABEL = {"startup": "Startup / SME", "pharma": "Pharma", "medtech": "Large medtech",
                "cro": "CRO / imaging core lab", "bigtech": "Big tech", "academic": "Academic",

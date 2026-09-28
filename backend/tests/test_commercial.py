@@ -114,3 +114,12 @@ def test_affiliation_junk_is_not_a_company():
     assert sc.company_in_affiliation("Barcelona (S.L.). Electronic address: x@y.com") == ""
     assert sc.company_in_affiliation("Social Welfare Organization Saiseikai Imperial Gift Foundation Inc, Tokyo") == ""
     assert sc.company_in_affiliation("Xingjiang Zhaosu County Xiyu Horse Industry Co, Ltd, Yili, China") == ""
+
+
+def test_place_names_are_not_large_companies():
+    assert orgs.buyer_type("University of Rochester", orgs.org_type("University of Rochester")) == "academic"
+    assert orgs.buyer_type("Rochester Pharma Inc", "industry") == "startup"      # not Roche
+    assert orgs.buyer_type("Wuxi", "industry") == "startup"                      # the city, not WuXi AppTec
+    assert sc.company_in_affiliation("Spital Thurgau AG, Münsterlingen, Switzerland") == ""
+    assert sc.company_in_affiliation("Qure.ai Technologies Pvt. Ltd. Raheja Platinum, Mumbai, India") == \
+        "Qure.ai Technologies Pvt. Ltd."

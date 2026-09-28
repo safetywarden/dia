@@ -328,7 +328,7 @@ COMPANY_AFF = ('(AFF:"Inc" OR AFF:"Ltd" OR AFF:"LLC" OR AFF:"GmbH" OR AFF:"Pvt" 
 LEGAL_FORM = re.compile(r"\b(inc|ltd|llc|gmbh|corp|corporation|pvt|co\.?,? ?ltd|b\.v|ag|s\.l|sas|pty|"
                         r"pte|k\.k|s\.r\.l|s\.p\.a|oy|ab|limited|private limited)(?!\w)\.?", re.I)
 NOT_COMPANY = re.compile(r"\b(department|dept|division|cent(er|re)|institut\w*|laborator\w*|lab|school|"
-                         r"college|universit\w*|hospital|\w*clinic\w*|klinik\w*|pharmacy|program\w*|faculty|"
+                         r"college|universit\w*|hospital|spital|\w*clinic\w*|klinik\w*|pharmacy|program\w*|faculty|"
                          r"medical corporation|health system|ministry|academy|society|electronic address|"
                          r"social welfare|welfare organi[sz]ation|association|foundation|county)\b", re.I)
 
@@ -347,6 +347,10 @@ def company_in_affiliation(line: str, gazetteer: set[str] | None = None) -> str:
             # "AnchorDx Medical Co, Ltd": the legal form sits in its own part.
             if re.match(r"(?i)^(ltd|inc|llc|limited)\b", p) and i > 0:
                 p = f"{parts[i - 1]}, {p.split()[0]}"
+            # "Qure.ai Technologies Pvt. Ltd. Raheja Platinum": stop at the legal form.
+            m = re.search(r"(?i)\b(pvt\.? ltd|private limited|co\.?,? ltd|ltd|inc|llc|gmbh|corp(oration)?)\b\.?", p)
+            if m and m.end() < len(p) - 3:
+                p = p[:m.end()].strip()
             if len(p) > 70 or NOT_COMPANY.search(p) or not re.search(r"[A-Za-z]{3}", p):
                 continue
             known = gazetteer and orgs.org_key(p) in gazetteer
