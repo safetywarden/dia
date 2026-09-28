@@ -725,6 +725,7 @@ def finalise(leads: list[Lead], q: SearchQuery | None = None) -> dict[str, dict]
 # --------------------------------------------------------------------- run
 
 REGIONS = ("us", "eu", "uk", "in")   # "in": India and Asia
+FDA_DEVICE_LIMIT = 1500             # three years of AI-device clearances in the searched panels
 
 
 def run(query: "SearchQuery | str | dict", years: int = 3, max_pubs: int = 200,
@@ -755,7 +756,9 @@ def collect(q: SearchQuery, years: int = 3, max_pubs: int = 200, max_grants: int
     # Europe PMC and ClinicalTrials.gov are global; NIH funding is US-only.
     # Commercial buyers first, so a record found twice (an SBIR grant is also
     # an NIH grant) keeps its commercial reading when merged by URL.
-    signals = commercial.harvest_fda_devices(q, max_trials, log, Signal)       # global applicants
+    # All clearances in the window, not a page of them: 300 covered only the last
+    # 12 months and missed chest X-ray vendors cleared earlier.
+    signals = commercial.harvest_fda_devices(q, FDA_DEVICE_LIMIT, log, Signal)  # global applicants
     signals += commercial.harvest_company_papers(q, years, max_pubs, log, Signal,
                                                  commercial.gazetteer())      # global
     if "us" in regions:
