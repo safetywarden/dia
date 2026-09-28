@@ -186,6 +186,8 @@ def match_lead(lead: dict, p: DatasetProfile, weights: dict[str, float]) -> dict
 
 
 GEO = ("geographic_gap", "asia_absent")
+# On a tie, the most concrete evidence carries the fit: a cleared product, then a paper.
+ANCHOR_SOURCE = {"devices": 3, "publications": 2, "grants": 1, "trials": 0}
 
 
 def _anchor(signals: list[dict], met: set[str]) -> dict | None:
@@ -210,7 +212,7 @@ def _anchor(signals: list[dict], met: set[str]) -> dict | None:
         sentences = {s["needs"][c] for c in codes}
         names_type = any(c.startswith("data_") for c in codes)
         strong = len(sentences) >= 2 or (names_type and len(codes) >= 2)
-        rank = (strong, len(sentences), len(codes), s.get("source") == "publications")
+        rank = (strong, len(sentences), len(codes), ANCHOR_SOURCE.get(s.get("source", ""), 0))
         if best is None or rank > best["rank"]:
             best = {"rank": rank, "strong": strong, "source": s.get("source", ""),
                     "title": s.get("title", ""), "url": s.get("url", ""), "needs": codes}

@@ -135,7 +135,9 @@ function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
   const isBuyer = (l: Lead) => COMMERCIAL.has(l.buyer_type ?? "") && !!l.buyer_intent;
   const nBuyers = leads.filter(isBuyer).length;
   // Companies pay for data; researchers mostly state the need. Show buyers first when there are any.
-  const [view, setView] = useState<"buyers" | "research" | "all">(nBuyers ? "buyers" : "all");
+  // Leads arrive after the first render, so the default is decided from them, not at mount.
+  const [picked, setView] = useState<"buyers" | "research" | "all" | null>(null);
+  const view = picked ?? (nBuyers ? "buyers" : "all");
   const INTENT = { "Active buyer": 0, "Likely buyer": 1, "": 2 } as const;
 
   const shown = useMemo(() => leads.filter((l) =>
