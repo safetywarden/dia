@@ -108,3 +108,9 @@ def test_large_company_subsidiaries_are_one_buyer():
     assert keys == {"siemens healthineers"}
     assert orgs.org_key("GE Medical Systems, LLC") == orgs.org_key("GE Healthcare") == "ge healthcare"
     assert orgs.buyer_type("GE Medical Systems, LLC", "industry") == "medtech"
+
+
+def test_affiliation_junk_is_not_a_company():
+    assert sc.company_in_affiliation("Barcelona (S.L.). Electronic address: x@y.com") == ""
+    assert sc.company_in_affiliation("Social Welfare Organization Saiseikai Imperial Gift Foundation Inc, Tokyo") == ""
+    assert sc.company_in_affiliation("Xingjiang Zhaosu County Xiyu Horse Industry Co, Ltd, Yili, China") == ""

@@ -328,8 +328,9 @@ COMPANY_AFF = ('(AFF:"Inc" OR AFF:"Ltd" OR AFF:"LLC" OR AFF:"GmbH" OR AFF:"Pvt" 
 LEGAL_FORM = re.compile(r"\b(inc|ltd|llc|gmbh|corp|corporation|pvt|co\.?,? ?ltd|b\.v|ag|s\.l|sas|pty|"
                         r"pte|k\.k|s\.r\.l|s\.p\.a|oy|ab|limited|private limited)(?!\w)\.?", re.I)
 NOT_COMPANY = re.compile(r"\b(department|dept|division|cent(er|re)|institut\w*|laborator\w*|lab|school|"
-                         r"college|universit\w*|hospital|clinic|pharmacy|program\w*|faculty|"
-                         r"medical corporation|health system|ministry|academy|society)\b", re.I)
+                         r"college|universit\w*|hospital|\w*clinic\w*|klinik\w*|pharmacy|program\w*|faculty|"
+                         r"medical corporation|health system|ministry|academy|society|electronic address|"
+                         r"social welfare|welfare organi[sz]ation|association|foundation|county)\b", re.I)
 
 
 def company_in_affiliation(line: str, gazetteer: set[str] | None = None) -> str:
@@ -354,6 +355,18 @@ def company_in_affiliation(line: str, gazetteer: set[str] | None = None) -> str:
     return ""
 
 
+def about_data(q, title: str, abstract: str) -> bool:
+    """The topic in the title or recurring in the abstract, and, with a data-type
+    focus, the data type in the title or at least twice in the abstract."""
+    if q.phrases and not q.matches_title_or_body(title, abstract):
+        return False
+    if not q.data_types:
+        return True
+    low_t, low_a = title.lower(), abstract.lower()
+    phrases = [p.lower() for p in q.data_type_phrases]
+    return any(p in low_t for p in phrases) or sum(low_a.count(p) for p in phrases) >= 2
+
+
 def harvest_company_papers(q, years: int, limit: int, log, Signal, gazetteer: set[str] | None = None) -> list:
     """Papers with a company author on the topic. A company publishing on this
     data is building on it: product R&D, validation, regulatory evidence."""
@@ -361,7 +374,7 @@ def harvest_company_papers(q, years: int, limit: int, log, Signal, gazetteer: se
         return []
     since = date.today().year - years
     query = f'{q.epmc_clause()} AND {COMPANY_AFF} AND PUB_YEAR:[{since} TO {date.today().year}] AND SRC:MED'
-    out, cursor, seen = [], "*", set()
+    out, cursor, seen, skipped = [], "*", set(), 0
     while len(out) < limit:
         d = get(EPMC + "?" + urllib.parse.urlencode({"query": query, "format": "json", "resultType": "core",
                                                      "pageSize": 100, "cursorMark": cursor,
@@ -371,6 +384,11 @@ def harvest_company_papers(q, years: int, limit: int, log, Signal, gazetteer: se
         for r in res:
             title = re.sub(r"<[^>]+>", "", r.get("title", "")).strip().rstrip(".")
             pmid = r.get("pmid") or ""
+            # About the data, not merely mentioning it: a genomic test paper that
+            # notes a CT scan is not imaging R&D.
+            if not about_data(q, title, re.sub(r"<[^>]+>", "", r.get("abstractText", ""))):
+                skipped += 1
+                continue
             for a in (r.get("authorList") or {}).get("author", []):
                 for af in ((a.get("authorAffiliationDetailsList") or {}).get("authorAffiliation") or []):
                     line = af.get("affiliation", "")
@@ -396,7 +414,8 @@ def harvest_company_papers(q, years: int, limit: int, log, Signal, gazetteer: se
     for s in out:
         countries[s.country or "?"] = countries.get(s.country or "?", 0) + 1
     top = ", ".join(f"{c} {n}" for c, n in sorted(countries.items(), key=lambda x: -x[1])[:8])
-    log(f"company research (Europe PMC): {len(out)} company-authored papers ({top})")
+    log(f"company research (Europe PMC): {len(out)} company-authored papers ({top}); "
+        f"{skipped} only mentioning the data type left out")
     return out[:limit]
 
 
