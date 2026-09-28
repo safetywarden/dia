@@ -43,11 +43,15 @@ class DatasetProfile:
     years: str = ""                         # e.g. "2015–2024"
     source: str = "manual"                  # manual | harm
     notes: str = ""
+    # Data types a buyer search must mention (e.g. ["imaging"] for an imaging
+    # archive, so "tuberculosis" finds imaging demand, not drug trials).
+    search_focus: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.origin = [o for o in dict.fromkeys(self.origin or []) if o in SUPPLY]
         self.data_types = [d for d in dict.fromkeys(self.data_types or []) if d in DATA_TYPES]
         self.diseases = [d.strip() for d in self.diseases if d and d.strip()]
+        self.search_focus = [d for d in dict.fromkeys(self.search_focus or []) if d in DATA_TYPES]
 
     @classmethod
     def of(cls, d: dict) -> "DatasetProfile":
@@ -57,7 +61,8 @@ class DatasetProfile:
         return asdict(self)
 
     def query_for(self, disease: str) -> SearchQuery:
-        return SearchQuery(disease=disease, supply=self.origin or list(ALL_ORIGINS))
+        return SearchQuery(disease=disease, supply=self.origin or list(ALL_ORIGINS),
+                           data_types=self.search_focus)
 
     def cohort_size(self, disease: str | None) -> int | None:
         if disease:

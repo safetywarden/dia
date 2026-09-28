@@ -282,6 +282,7 @@ class DatasetIn(BaseModel):
     years: str = Field("", max_length=40)
     source: str = "manual"
     notes: str = Field("", max_length=2000)
+    search_focus: list[str] = Field(default_factory=list)
 
 
 class HarmIn(BaseModel):

@@ -30,6 +30,7 @@ const NEED_LABEL: Record<string, string> = {
   data_biobank: "Needs biobank samples",
   data_device: "Needs wearable / monitoring data",
   data_pro: "Needs patient-reported outcomes",
+  data_reports: "Needs paired radiology reports",
 };
 
 export default function RunView({ id }: { id: number }) {

@@ -21,7 +21,7 @@ export type SearchQuery = {
 export const DATA_TYPES: [string, string][] = [
   ["genomic", "Genomic / sequencing"], ["imaging", "Imaging"], ["ehr", "EHR / longitudinal"],
   ["claims", "Claims"], ["biobank", "Biobank / samples"], ["device", "Device / wearable"],
-  ["pro", "Patient-reported outcomes"],
+  ["pro", "Patient-reported outcomes"], ["reports", "Radiology reports"],
 ];
 
 export const ORIGINS: [string, string][] = [
@@ -53,6 +53,7 @@ export type DatasetProfile = {
   patients: number | null; disease_patients: Record<string, number>; sites: number | null;
   followup_median_years: number | null; diverse: boolean | null; prospective: boolean | null;
   population: string; coding: string[]; years: string; source: string; notes: string;
+  search_focus: string[];
 };
 export type Dataset = { id: number; name: string; partner: string; profile: DatasetProfile;
   created_by: string; created_at: string; updated_at: string };

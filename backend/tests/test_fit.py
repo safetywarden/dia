@@ -72,3 +72,19 @@ def test_geography_alone_is_not_a_fit():
     f = match_lead(lead("geographic_gap"), US_EHR, W)
     assert f["met"] and f["label"] == "Geographic opening"
     assert match_lead(lead("geographic_gap", "longitudinal_gap"), US_EHR, W)["label"] == "Partial"
+
+
+def test_search_focus_narrows_buyer_search_to_data_types():
+    p = DatasetProfile(name="Imaging archive", origin=["IN"], diseases=["tuberculosis"],
+                       data_types=["imaging", "reports"], search_focus=["imaging", "bogus"])
+    q = p.query_for("tuberculosis")
+    assert q.data_types == ["imaging"]
+    assert q.matches("Deep learning on chest x-ray images for tuberculosis screening")
+    assert not q.matches("Bedaquiline regimens for drug-resistant tuberculosis")
+
+
+def test_reports_need_is_detected_and_met():
+    assert "data_reports" in dia.detect_needs("A limitation is the lack of paired radiology reports for training.")
+    p = DatasetProfile(name="x", diseases=["stroke"], data_types=["imaging", "reports"])
+    f = match_lead(lead("data_reports", disease="stroke"), p, W)
+    assert f["met"] and "Radiology reports" in f["met"][0]["why"]

@@ -6,7 +6,7 @@ import { api, DATA_TYPES, MARKETS, ORIGINS, type Dataset, type DatasetProfile, t
 const EMPTY: DatasetProfile = {
   name: "", partner: "", origin: [], diseases: [], data_types: [], patients: null, disease_patients: {},
   sites: null, followup_median_years: null, diverse: null, prospective: null, population: "",
-  coding: [], years: "", source: "manual", notes: "",
+  coding: [], years: "", source: "manual", notes: "", search_focus: [],
 };
 
 const num = (v: string) => (v.trim() === "" ? null : Number(v));
@@ -166,6 +166,12 @@ function ProfileForm({ initial, id, onDone, onCancel }:
       <fieldset className="checks"><legend>Data types included</legend>
         {DATA_TYPES.map(([v, l]) => <label key={v} className="check"><input type="checkbox" checked={p.data_types.includes(v)}
           onChange={(e) => toggle("data_types", v, e.target.checked)} />{l}</label>)}</fieldset>
+      <label className="check">
+        <input type="checkbox" checked={(p.search_focus ?? []).length > 0}
+               onChange={(e) => set("search_focus", e.target.checked ? p.data_types.filter((t) => t !== "reports") : [])} />
+        Only find demand that mentions these data types
+        <span className="muted small">(e.g. an imaging archive: find imaging research, not drug trials)</span>
+      </label>
       <p className="muted small" style={{ margin: 0 }}>Leave anything you don&apos;t know blank — it is shown as
         &quot;not known&quot; against each buyer&apos;s needs and never counted as a match.</p>
       {error && <p className="error">{error}</p>}
