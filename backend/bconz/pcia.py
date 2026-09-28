@@ -632,7 +632,11 @@ def contacts_from_510k(number: str, lead_org: str, why: str, lead_country: str =
     seg = text[i:i + 3500] if i >= 0 else text[:3500]
     people = [{"firstName": " ".join(contact_name.split()[:-1]), "lastName": contact_name.split()[-1]}] \
         if contact_name else []
-    for em in dict.fromkeys(e.rstrip(".,;") for e in EMAIL_RE.findall(seg)):
+    found = list(dict.fromkeys(e.rstrip(".,;") for e in EMAIL_RE.findall(seg)))
+    # PDF text breaks lines mid-address ("poo ja.shah@viz.ai"); a fragment that is
+    # the tail of another address found in the same summary is that address.
+    found = [e for e in found if not any(o != e and o.lower().endswith(e.lower()) for o in found)]
+    for em in found:
         if at_org(em, None, lead_org) is not True:
             continue                         # the consultant who prepared the file
         j = seg.find(em)

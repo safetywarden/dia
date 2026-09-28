@@ -151,3 +151,18 @@ def test_company_buyer_contacts_must_be_at_the_company(monkeypatch):
                          "needs": {"company_rnd": "Company research"}}]}
     pcia.resolve({"leads": [lead]}, log=lambda m: None)
     assert seen["require_org"] is True
+
+
+def test_510k_address_fragments_are_dropped(monkeypatch):
+    class Page:
+        def extract_text(self):
+            return ("510(k) Summary Submitter: Viz.ai, Inc. Contact: Pooja Shah pooja.shah@viz.ai "
+                    "Regulatory: poo\nja.shah@viz.ai Consultant: a@regconsult.com")
+    class Reader:
+        def __init__(self, *a): self.pages = [Page()]
+    import pypdf
+    monkeypatch.setattr(pypdf, "PdfReader", Reader)
+    monkeypatch.setattr(pcia, "_get_bytes", lambda url: b"%PDF")
+    recs = pcia.contacts_from_510k("K250001", "Viz.ai, Inc.", "why", "US", "Pooja Shah", "Viz device")
+    assert [r.value for r in recs] == ["pooja.shah@viz.ai"]        # fragment and consultant dropped
+    assert recs[0].person_name == "Pooja Shah"
