@@ -23,6 +23,7 @@ export const DATA_TYPES: [string, string][] = [
   ["genomic", "Genomic / sequencing"], ["imaging", "Imaging"], ["ehr", "EHR / longitudinal"],
   ["claims", "Claims"], ["biobank", "Biobank / samples"], ["device", "Device / wearable"],
   ["pro", "Patient-reported outcomes"], ["reports", "Radiology reports"],
+  ["ultrasound", "Ultrasound / echo"], ["ecg", "ECG / EKG"],
 ];
 
 export const ORIGINS: [string, string][] = [

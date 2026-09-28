@@ -123,3 +123,24 @@ def test_place_names_are_not_large_companies():
     assert sc.company_in_affiliation("Spital Thurgau AG, Münsterlingen, Switzerland") == ""
     assert sc.company_in_affiliation("Qure.ai Technologies Pvt. Ltd. Raheja Platinum, Mumbai, India") == \
         "Qure.ai Technologies Pvt. Ltd."
+
+
+def test_ultrasound_and_ecg_data_types():
+    assert "data_ecg" in dia.detect_needs("A limitation is the lack of 12-lead ECG recordings in older adults.")
+    assert "data_ultrasound" in dia.detect_needs("Future studies with larger echocardiography datasets are needed.")
+    q = SearchQuery(disease="heart failure", data_types=["ultrasound", "ecg"])
+    assert q.matches("Deep learning on echocardiography for heart failure")
+    assert q.matches("AI-ECG detection of heart failure")
+
+
+def test_fda_panels_follow_the_data_types(monkeypatch):
+    rows = [{"Date of Final Decision": "06/29/2026", "Submission Number": f"K26000{i}", "Device": d,
+             "Company": "X Inc", "Panel (Lead)": panel, "Primary Product Code": "QIH"}
+            for i, (d, panel) in enumerate([("CXR AI", "Radiology"), ("ECG AI", "Cardiovascular"), ("Retina AI", "Ophthalmic")])]
+    monkeypatch.setattr(sc, "fda_ai_devices", lambda: rows)
+    monkeypatch.setattr(sc, "openfda_510k", lambda nums: {})
+    got = lambda types: sorted(s.extra["panel"] for s in sc.harvest_fda_devices(
+        SearchQuery(disease="x", data_types=types), 50, lambda m: None, dia.Signal))
+    assert got(["ecg"]) == ["Cardiovascular"]
+    assert got(["imaging"]) == ["Ophthalmic", "Radiology"]
+    assert got(["ultrasound", "ecg"]) == ["Cardiovascular", "Radiology"]

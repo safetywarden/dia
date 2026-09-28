@@ -31,6 +31,8 @@ const NEED_LABEL: Record<string, string> = {
   data_device: "Needs wearable / monitoring data",
   data_pro: "Needs patient-reported outcomes",
   data_reports: "Needs paired radiology reports",
+  data_ultrasound: "Needs ultrasound / echo data",
+  data_ecg: "Needs ECG / EKG data",
 };
 
 export default function RunView({ id }: { id: number }) {

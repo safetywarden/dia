@@ -47,6 +47,10 @@ BIRAC = "https://birac.nic.in/projects_supported.php"
 
 # FDA review panels whose products are built on imaging.
 IMAGING_PANELS = {"Radiology", "Ophthalmic"}
+# FDA review panels whose products are built on each data type. Echo and
+# vascular ultrasound AI is often reviewed by the cardiovascular panel; ECG AI is.
+PANELS_FOR = {"imaging": {"Radiology", "Ophthalmic"}, "reports": {"Radiology"},
+              "ultrasound": {"Radiology", "Cardiovascular"}, "ecg": {"Cardiovascular"}}
 # NIH small-business activity codes: SBIR (R43/R44), STTR (R41/R42), and
 # their cooperative and commercialisation variants.
 SBIR_CODES = ["R41", "R42", "R43", "R44", "U43", "U44", "SB1", "U2B"]
@@ -143,7 +147,8 @@ def harvest_fda_devices(q, limit: int, log, Signal, years: int = 3) -> list:
         log("cleared AI devices (FDA): list unavailable")
         return []
     since = date(date.today().year - years, 1, 1).isoformat()
-    imaging = bool({"imaging", "reports"} & set(q.data_types))
+    panels = set().union(*(PANELS_FOR.get(t, set()) for t in q.data_types)) if q.data_types else set()
+    imaging = bool(panels)
     topic = [p.lower() for p in q.phrases]
     picked = []
     for r in rows:
@@ -155,7 +160,7 @@ def harvest_fda_devices(q, limit: int, log, Signal, years: int = 3) -> list:
         if q.sponsor and orgs.org_key(q.sponsor) not in orgs.org_key(company):
             continue
         if imaging:
-            if panel not in IMAGING_PANELS:
+            if panel not in panels:
                 continue
         elif not (topic and _mentions(device, topic)):
             continue
