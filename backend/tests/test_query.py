@@ -114,3 +114,33 @@ def test_trials_respect_data_type_focus(monkeypatch):
     got = [s.extra["nct"] for s in dia.harvest_trials(q, 10, lambda m: None)]
     assert got == ["NCT2", "NCT3"]
     assert len(dia.harvest_trials(SearchQuery(disease="pneumonia"), 10, lambda m: None)) == 3
+
+
+@pytest.mark.parametrize("sentence,found", [
+    # Run #30 false positives: not about people, or describing data they already have.
+    ("Radiology remains underrepresented in U.S. medical school clinical curricula.", False),
+    ("This study aims to illuminate the contributions of underrepresented pioneers in radiology.", False),
+    ("We examined outcomes in a racially diverse cohort of 4,000 older adults.", False),
+    ("Synthetic data improved recall for underrepresented classes.", False),
+    # Real needs.
+    ("Traditional criteria may overlook high-risk individuals, particularly in underrepresented populations.", True),
+    ("External validation in multicenter and ethnically diverse cohorts is required.", True),
+    ("Challenges remain, including generalizability across diverse populations.", True),
+    ("Patients with severe prestroke disability (PSD) remain underrepresented in thrombectomy studies.", True),
+])
+def test_diverse_population_is_about_people_and_a_gap(sentence, found):
+    assert ("diverse_population" in dia.detect_needs(sentence)) is found
+
+
+def test_data_type_cue_must_be_near_the_data_phrase():
+    methods = ("This study proposes a deep learning approach to segment lung tumor regions from CT scans "
+               "and classify images as cancerous or noncancerous, aiming to overcome the limitations of "
+               "conventional ML models.")
+    assert "data_imaging" not in dia.detect_needs(methods)
+    assert "data_imaging" not in dia.detect_needs(
+        "This study evaluated limited sequence wrist MRI scans in suspected scaphoid fractures.")
+
+
+def test_glued_abstract_headings_split_sentences():
+    t = "Concerns about generalizability remain a barrier.MethodsWe reviewed 40 CT scans."
+    assert dia.sentences(t) == ["Concerns about generalizability remain a barrier.", "We reviewed 40 CT scans."]

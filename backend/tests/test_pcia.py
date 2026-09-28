@@ -53,3 +53,86 @@ def test_plus_one_is_only_a_fallback():
     # +1 is North America; a footprint naming Canada must win over it.
     assert resolve_jurisdiction(("phone", "+1 416 555 0100"), ("footprint", "CA"))[1] == "CA"
     assert resolve_jurisdiction(("phone", "+1 617 555 0100"))[0] == "US"
+
+
+# ------------------------------------------------ the right person for the need
+
+from bconz import pcia  # noqa: E402
+
+
+def test_corresponding_author_in_author_notes_footnote():
+    """BMJ, AME and MDPI put the address in an <author-notes> footnote, not <corresp>."""
+    xml = ('<front><author-notes><fn id="cor1"><label>✉</label><p>Dr Dejana Braithwaite; '
+           '<email>dbraithwaite@ufl.edu</email></p></fn><fn id="fn5"><p>No competing interests. '
+           'x@y.org</p></fn></author-notes></front>')
+    blocks = pcia.corresp_blocks(xml)
+    assert len(blocks) == 1 and "dbraithwaite" in blocks[0]
+    mdpi = '<author-notes><fn id="c1-cancers-17-03406"><p>Correspondence: <email>jwu11@mdanderson.org</email></p></fn></author-notes>'
+    assert pcia.corresp_blocks(mdpi)
+
+
+def test_short_surname_email_is_attributed_by_initial_and_surname():
+    authors = [{"firstName": "Jia", "lastName": "Wu"}, {"firstName": "Brett", "lastName": "Carter"}]
+    assert pcia._author_for_email("jwu11@mdanderson.org", authors) == "Jia Wu"
+    assert pcia._author_for_email("lab@mdanderson.org", authors) == ""
+
+
+def test_affiliation_email_belongs_to_that_author_only():
+    authors = [{"fullName": "Sheng B", "authorAffiliationDetailsList": {"authorAffiliation": [
+                   {"affiliation": "Shanghai Jiao Tong University, China. Electronic address: shengbin@cs.sjtu.edu.cn."}]}},
+               {"fullName": "Wong MYH", "authorAffiliationDetailsList": {"authorAffiliation": [
+                   {"affiliation": "University of Cambridge, UK."}]}}]
+    assert [(n, e) for n, e, _ in pcia.affiliation_emails(authors)] == [("Sheng B", "shengbin@cs.sjtu.edu.cn")]
+
+
+def _fit_lead():
+    return {"org_display": "Univ X", "fit": {
+                "label": "Partial", "met": [{"need": "diverse_population"}, {"need": "geographic_gap"}],
+                "anchor": {"url": "https://europepmc.org/article/MED/2"}},
+            "signals": [
+                {"source": "trials", "url": "t1", "title": "Unrelated drug trial",
+                 "needs": {"geographic_gap": "no sites in India"}, "extra": {"nct": "NCT1"}},
+                {"source": "publications", "url": "https://europepmc.org/article/MED/1", "title": "Other paper",
+                 "needs": {}},
+                {"source": "publications", "url": "https://europepmc.org/article/MED/2", "title": "The paper",
+                 "needs": {"diverse_population": "…underrepresented populations"}}]}
+
+
+def test_dataset_match_starts_from_the_paper_that_states_the_need():
+    order = pcia.evidence_first(_fit_lead())
+    assert order[0][0]["title"] == "The paper" and order[0][1] is True
+    # The trial is relevant only through geography, which a paper-based fit doesn't rest on.
+    assert dict((s["title"], r) for s, r in order)["Unrelated drug trial"] is False
+
+
+def test_unrelated_trial_contacts_are_not_used_for_a_dataset_match(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pcia, "contacts_from_trial", lambda *a, **k: calls.append("trial") or [])
+    monkeypatch.setattr(pcia, "contacts_from_publication",
+                        lambda pmid, org, why, c="": calls.append(pmid) or [rec()])
+    monkeypatch.setattr(pcia, "corresponding_authors_for_org", lambda *a, **k: [])
+    recs = pcia.resolve({"leads": [_fit_lead()]}, log=lambda m: None)
+    assert calls == ["2"]                              # only the paper stating the need
+    assert recs[0].relation == "author" and recs[0].about == "The paper"
+
+
+def test_plain_search_labels_colleagues_as_organisation(monkeypatch):
+    lead = _fit_lead(); del lead["fit"]
+    monkeypatch.setattr(pcia, "contacts_from_trial", lambda *a, **k: [rec()])
+    monkeypatch.setattr(pcia, "contacts_from_publication", lambda *a, **k: [])
+    recs = pcia.resolve({"leads": [lead]}, log=lambda m: None)
+    assert recs and recs[0].relation == "study"        # the trial states a (geographic) need
+
+
+@pytest.mark.parametrize("email,aff,org,expected", [
+    ("wzhou2@emory.edu", "", "Emory University", True),
+    ("jenny@gsu.edu", "", "Emory University", False),                     # co-author at Georgia State
+    ("jwu11@mdanderson.org", "", "M.D. Anderson Cancer Center", True),
+    ("lary.robinson@moffitt.org", "", "University of South Florida", False),
+    ("someone@gmail.com", "", "Duke University", None),                    # can't tell
+    ("someone@gmail.com", "Department of Radiology, Duke University, Durham NC", "Duke University", True),
+    ("shengbin@cs.sjtu.edu.cn", "", "University of Cambridge", False),
+])
+def test_is_the_author_at_the_lead_organisation(email, aff, org, expected):
+    author = {"authorAffiliationDetailsList": {"authorAffiliation": [{"affiliation": aff}]}} if aff else None
+    assert pcia.at_org(email, author, org) is expected

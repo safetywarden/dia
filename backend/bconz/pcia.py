@@ -63,9 +63,10 @@ from pathlib import Path
 from typing import Callable
 
 from . import orgs
+from .query import DATA_TYPES
 from .http import get as _get
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 Progress = Callable[[str], None]
 
 
@@ -128,6 +129,12 @@ class ContactRecord:
     value: str | None
     provenance: Provenance
     why_this_person: str                  # links back to the demand signal
+    # How this person relates to the stated need that made the lead:
+    #   author       -- wrote the paper that states it
+    #   study        -- published contact for the trial or grant that states it
+    #   organisation -- same organisation, different work: check relevance first
+    relation: str = "organisation"
+    about: str = ""                       # title of the work the contact comes from
     confidence: float = 1.0
     suppressed: bool = False
     notes: list[str] = field(default_factory=list)
@@ -254,13 +261,20 @@ def _prov(source_url: str, source_type: str, snippet: str, publisher: str,
 
 # ------------------------------------------------- source: published papers
 
+OTHER_INSTITUTION = ("this author appears to be at another institution (email domain or "
+                     "affiliation) — the paper still states the need; say how you found them")
+
+
 def contacts_from_publication(pmid: str, lead_org: str, why: str,
-                              lead_country: str = "") -> list[ContactRecord]:
+                              lead_country: str = "", require_org: bool = False) -> list[ContactRecord]:
     """Corresponding-author email from the open-access full text.
 
     The strongest basis available: the author placed the address in the paper
     under a 'Corresponding Author' heading, for the express purpose of being
     written to about that work.
+
+    `require_org` keeps only authors shown to be at `lead_org` -- for a
+    colleague lookup, where a co-author elsewhere is simply the wrong person.
     """
     out: list[ContactRecord] = []
     meta = _get("https://www.ebi.ac.uk/europepmc/webservices/rest/search?"
@@ -281,7 +295,26 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str,
     article_url = f"https://europepmc.org/article/MED/{pmid}"
 
     if not (pmcid and open_access):
-        # Not open access: the name is public, the email is not published here.
+        # Not open access. MEDLINE often carries the address the author printed
+        # in the article's affiliation line ("Electronic address: ..."); that is
+        # the same published address, just reached through the abstract record.
+        for name, em, aff_line in affiliation_emails(authors):
+            where = at_org(em, {"authorAffiliationDetailsList": {"authorAffiliation": [
+                {"affiliation": aff_line}]}}, lead_org)
+            if require_org and where is not True:
+                continue
+            out.append(ContactRecord(
+                org_display=lead_org, org_key="", person_name=name,
+                person_role="author (email in published affiliation)",
+                channel="email", value=em,
+                provenance=_prov(article_url, SourceType.SELF_PUBLISHED_CORRESPONDENCE,
+                                 aff_line[:300], "Europe PMC / MEDLINE author affiliation",
+                                 ("email", em), ("affiliation", aff_line),
+                                 ("lead_country", lead_country)),
+                why_this_person=why, relation="author", about=title,
+                notes=[f"published in: {title}"] + ([OTHER_INSTITUTION] if where is False else [])))
+        if out or require_org:
+            return out
         author = (rec.get("authorString", "") or "").split(",")[0].strip()
         if author:
             out.append(ContactRecord(
@@ -291,9 +324,9 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str,
                 provenance=_prov(article_url, SourceType.SELF_PUBLISHED_CORRESPONDENCE,
                                  f"Author of: {title}", "Europe PMC",
                                  ("affiliation", affil), ("lead_country", lead_country)),
-                why_this_person=why,
-                notes=["article is not open access — no published email; "
-                       "approach via the institution's published research office"]))
+                why_this_person=why, relation="author", about=title,
+                notes=["article is not open access — no published email; check the "
+                       "publisher's page for the paper, or the institution's research office"]))
         return out
 
     xml = _get(f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML",
@@ -305,12 +338,12 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str,
     aff_text = " ".join(re.sub(r"\s+", " ", TAGS.sub(" ", a))
                         for a in AFF_RE.findall(xml)[:3])
     seen: set[str] = set()
-    for block in CORRESP_RE.findall(xml)[:6]:
+    for block in corresp_blocks(xml)[:6]:
         emails = EMAIL_TAG.findall(block) or EMAIL_RE.findall(TAGS.sub(" ", block))
         plain = re.sub(r"\s+", " ", TAGS.sub(" ", block)).strip()
         # The name sits between the label and the email in the corresp block.
         name_m = re.search(
-            r"(?:Corresponding Authors?|Correspondence(?: to)?)\s*[:\-]?\s*"
+            r"(?:Corresponding Authors?|Correspondence(?: to)?|^(?:Dr|Prof)\.?)\s*[:\-]?\s*"
             r"([A-Z][A-Za-z.\-']+(?:\s+[A-Z][A-Za-z.\-']+){0,3})", plain)
         label_name = name_m.group(1).strip() if name_m else ""
         for em in emails:
@@ -318,7 +351,17 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str,
             if not EMAIL_RE.fullmatch(em) or em.lower() in seen:
                 continue
             seen.add(em.lower())
-            name = label_name or _author_for_email(em, authors) or "Corresponding author"
+            # One address per block names the block's person; with several,
+            # only the address itself can say whose it is.
+            # The author list is authoritative; a heading parse can stop short
+            # ("Dr Kenneth" for Dr Kenneth Gunasekera).
+            listed = _author_for_email(em, authors)
+            block_name = label_name if len(emails) == 1 else ""
+            name = ((listed if listed and (" " not in block_name or len(listed) > len(block_name))
+                     else block_name) or listed or "Corresponding author")
+            where = at_org(em, _author_record(em, authors), lead_org)
+            if require_org and where is not True:
+                continue
             out.append(ContactRecord(
                 org_display=lead_org, org_key="", person_name=name,
                 person_role="corresponding author", channel="email", value=em,
@@ -327,30 +370,112 @@ def contacts_from_publication(pmid: str, lead_org: str, why: str,
                                  "Europe PMC open-access full text",
                                  ("corresp", plain), ("email", em), ("affiliation", affil),
                                  ("aff_xml", aff_text), ("lead_country", lead_country)),
-                why_this_person=why,
-                notes=[f"published in: {title}"]))
+                why_this_person=why, relation="author", about=title,
+                notes=[f"published in: {title}"] + ([OTHER_INSTITUTION] if where is False else [])))
     return out
+
+
+# Journals mark the corresponding author in different places: JATS <corresp>,
+# or a footnote in <author-notes> (id "cor1", "c1-…", "…crsp…", or text that
+# says "Correspondence").
+FN_RE = re.compile(r"<fn\b([^>]*)>.*?</fn>", re.S | re.I)
+FN_CORRESP_ID = re.compile(r'id="(?:cor\d|c\d+-|[^"]*(?:corresp|crsp))', re.I)
+
+
+def corresp_blocks(xml: str) -> list[str]:
+    notes = " ".join(re.findall(r"<author-notes\b.*?</author-notes>", xml, re.S | re.I))
+    fns = [m.group(0) for m in FN_RE.finditer(notes)
+           if FN_CORRESP_ID.search(m.group(1)) or re.search(r"correspond", m.group(0), re.I)]
+    return CORRESP_RE.findall(xml) + fns
+
+
+def affiliation_emails(authors: list[dict]) -> list[tuple[str, str, str]]:
+    """(author name, email, affiliation line) for addresses printed in an
+    author's own published affiliation. Each address is tied to the author
+    whose affiliation carries it, never to anyone else."""
+    out, seen = [], set()
+    for a in authors:
+        name = a.get("fullName") or f"{a.get('firstName', '')} {a.get('lastName', '')}".strip()
+        for aff in ((a.get("authorAffiliationDetailsList") or {}).get("authorAffiliation") or []):
+            line = aff.get("affiliation", "") or ""
+            for em in EMAIL_RE.findall(line):
+                em = em.strip().rstrip(".,;")
+                if em.lower() not in seen:
+                    seen.add(em.lower())
+                    out.append((name, em, line))
+    return out
+
+
+WEBMAIL = {"gmail", "googlemail", "yahoo", "hotmail", "outlook", "live", "icloud", "aol",
+           "163", "126", "qq", "sina", "foxmail", "yeah", "protonmail", "rediffmail"}
+_GENERIC_LABELS = {"edu", "org", "com", "net", "gov", "ac", "co", "mil", "int", "info", "med",
+                   "health", "mail", "email", "cs", "www", *CCTLD}
+_ORG_STOP = {"university", "universidad", "universite", "universita", "universitat", "college",
+             "institute", "institut", "hospital", "hospitals", "medical", "medicine", "center",
+             "centre", "school", "health", "sciences", "science", "research", "clinic", "national",
+             "the", "of", "and", "for", "at", "de", "da", "di", "del", "general", "affiliated",
+             "first", "second", "third", "people", "peoples", "city", "state", "cancer"}
+
+
+def _org_words(org: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", org.lower()) if len(w) >= 3 and w not in _ORG_STOP}
+
+
+def at_org(email: str, author: dict | None, org: str) -> bool | None:
+    """Is this address's owner at the lead's organisation?
+
+    True/False from the email's own domain ("emory.edu" for Emory) or the
+    author's published affiliation; None when neither says (a webmail address
+    with no affiliation on record). Used to keep a colleague lookup from
+    returning a co-author at another institution.
+    """
+    words = _org_words(org)
+    if not words:
+        return None
+    labels = [l for l in email.lower().split("@")[-1].split(".") if l not in _GENERIC_LABELS]
+    if labels and not WEBMAIL & set(labels):
+        joined = "".join(sorted(words, key=len, reverse=True))
+        if any(len(l) >= 3 and (l in words or l in joined or any(w in l for w in words if len(w) >= 4))
+               for l in labels):
+            return True
+    affs = " ".join(a.get("affiliation", "") for a in
+                    ((author or {}).get("authorAffiliationDetailsList") or {}).get("authorAffiliation") or [])
+    if affs:
+        return bool(words & _org_words(affs))
+    if labels and not WEBMAIL & set(labels):
+        return False              # an institutional domain that isn't this organisation's
+    return None
+
+
+def _author_record(email: str, authors: list[dict]) -> dict | None:
+    """The single listed author an address belongs to, or None (see below)."""
+    local = re.sub(r"[^a-z]", "", email.split("@")[0].lower())
+    hits = []
+    for a in authors:
+        last = re.sub(r"[^a-z]", "", (a.get("lastName") or "").lower())
+        first = re.sub(r"[^a-z]", "", (a.get("firstName") or a.get("initials") or "").lower())
+        if not last:
+            continue
+        if (len(last) >= 3 and last in local) or (first and local in (first[0] + last, last + first[0])):
+            hits.append(a)
+    return hits[0] if len(hits) == 1 else None
 
 
 def _author_for_email(email: str, authors: list[dict]) -> str:
     """Which listed author does a published corresponding email belong to?
 
     Attribution only: both the address and the author list are published in
-    the same article. The surname must appear in the address's local part,
-    and exactly one author may match — an ambiguous match names nobody.
+    the same article. The surname must appear in the address's local part (or
+    the local part is initial + surname, for short surnames like "jwu"), and
+    exactly one author may match — an ambiguous match names nobody.
     """
-    local = re.sub(r"[^a-z]", "", email.split("@")[0].lower())
-    hits = []
-    for a in authors:
-        last = re.sub(r"[^a-z]", "", (a.get("lastName") or "").lower())
-        if len(last) >= 3 and last in local:
-            hits.append(f"{a.get('firstName', '')} {a.get('lastName', '')}".strip())
-    return hits[0] if len(hits) == 1 else ""
+    a = _author_record(email, authors)
+    return f"{a.get('firstName', '')} {a.get('lastName', '')}".strip() if a else ""
 
 
 def corresponding_authors_for_org(org: str, disease: str, why: str,
-                                  max_papers: int = 3,
-                                  lead_country: str = "") -> list[ContactRecord]:
+                                  max_papers: int = 3, lead_country: str = "",
+                                  focus: list[str] | None = None) -> list[ContactRecord]:
     """Find recent open-access papers from an organisation and take the
     corresponding author.
 
@@ -366,7 +491,10 @@ def corresponding_authors_for_org(org: str, disease: str, why: str,
     clean = re.sub(r"[^\w\s]", " ", clean).strip()
     if len(clean) < 5:
         return out
-    q = (f'(AFF:"{clean}" AND ABSTRACT:"{disease}") '
+    # A dataset with a focus (an imaging archive) wants the colleague who works
+    # on that kind of data, not any author on the disease.
+    also = "".join(f' AND ABSTRACT:"{t}"' for t in (focus or [])[:1])
+    q = (f'(AFF:"{clean}" AND ABSTRACT:"{disease}"{also}) '
          f'AND OPEN_ACCESS:y AND IN_EPMC:y AND SRC:MED')
     d = _get("https://www.ebi.ac.uk/europepmc/webservices/rest/search?"
              + urllib.parse.urlencode({"query": q, "format": "json",
@@ -380,7 +508,7 @@ def corresponding_authors_for_org(org: str, disease: str, why: str,
         pmid = r.get("pmid")
         if not pmid:
             continue
-        got = contacts_from_publication(str(pmid), org, why, lead_country)
+        got = contacts_from_publication(str(pmid), org, why, lead_country, require_org=True)
         out += [g for g in got if g.channel == "email"]
         if out:
             break          # one good corresponding author per org is enough
@@ -679,12 +807,12 @@ def export_csv(recs: list[ContactRecord], path: Path,
         w = csv.writer(fh)
         w.writerow(["organisation", "person", "role", "channel", "value",
                     "source_url", "source_type", "lawful_basis", "jurisdiction",
-                    "retrieved_at", "why_this_person"])
+                    "retrieved_at", "why_this_person", "relation_to_need", "about"])
         for r in ok:
             w.writerow([r.org_display, r.person_name, r.person_role, r.channel,
                         r.value, r.provenance.source_url, r.provenance.source_type,
                         r.provenance.lawful_basis, r.provenance.jurisdiction,
-                        r.provenance.retrieved_at, r.why_this_person])
+                        r.provenance.retrieved_at, r.why_this_person, r.relation, r.about])
     return len(ok), excluded
 
 
@@ -696,6 +824,34 @@ def suppressed(r: ContactRecord, suppression: set[str]) -> bool:
                                   or r.person_name.lower() in suppression)
 
 
+GEO_NEEDS = {"geographic_gap", "asia_absent"}
+RELATION_RANK = {"author": 0, "study": 1, "organisation": 2}
+
+
+def evidence_first(lead: dict, limit: int = 6) -> list[tuple[dict, bool]]:
+    """The lead's signals, the ones that state the need first.
+
+    Returns (signal, relevant) pairs. On a dataset match, relevant means the
+    signal states a need the dataset meets, and the fit's anchor (the single
+    piece of work the fit rests on) comes first. On a plain search, any stated
+    need or funded programme counts.
+    """
+    f = lead.get("fit")
+    met = {r["need"] for r in f.get("met", [])} if f else None
+    if met is not None and f.get("label") != "Geographic opening":
+        # A trial's missing sites are not what a paper-based fit rests on.
+        met -= GEO_NEEDS
+    anchor = ((f or {}).get("anchor") or {}).get("url")
+
+    def relevant(s: dict) -> bool:
+        codes = set(s.get("needs") or {})
+        return bool(codes & met) if met is not None else bool(codes)
+
+    sigs = lead.get("signals", [])
+    ordered = sorted(sigs, key=lambda s: (s.get("url") != anchor or not anchor, not relevant(s)))
+    return [(s, relevant(s)) for s in ordered[:limit]]
+
+
 def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
             log: Progress | None = None) -> list[ContactRecord]:
     """Resolve lawful contacts for the top N leads of a DIA leads document."""
@@ -705,6 +861,9 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
     disease = doc.get("disease", "")
     recs: list[ContactRecord] = []
 
+    focus = [DATA_TYPES[t][1][0] for t in (doc.get("dataset") or {}).get("search_focus", [])
+             if t in DATA_TYPES]
+
     for i, lead in enumerate(leads, 1):
         org = lead.get("org_display", "")
         key = lead.get("org_key", "")
@@ -713,29 +872,48 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
         log(f"[{i}/{len(leads)}] {org[:52]}")
 
         found: list[ContactRecord] = []
-        for s in lead.get("signals", [])[:6]:
+        for s, relevant in evidence_first(lead):
+            fit_run = "fit" in lead
+            if fit_run and not relevant:
+                # A dataset match is pitched on a stated need. Someone at the same
+                # organisation whose work doesn't state it is the wrong person.
+                continue
+            got: list[ContactRecord] = []
             src = s.get("source")
             if src == "publications":
                 m = re.search(r"/MED/(\d+)", s.get("url", ""))
                 if m:
-                    found += contacts_from_publication(m.group(1), org, why, country)
+                    got += contacts_from_publication(m.group(1), org, why, country)
             elif src == "trials":
                 extra = s.get("extra", {}) or {}
                 if extra.get("nct"):
-                    found += contacts_from_trial(extra["nct"], org, why, country)
+                    got += contacts_from_trial(extra["nct"], org, why, country)
                 if extra.get("isrctn"):
-                    found += contacts_from_isrctn(extra["isrctn"], org, why, country)
+                    got += contacts_from_isrctn(extra["isrctn"], org, why, country)
                 # CTIS publishes investigator and CRO emails under EU trial
                 # transparency law, not for contact. Deliberately not used.
             elif src == "grants" and s.get("person"):
-                found.append(contact_from_grant(s["person"], org, s.get("url", ""), why,
-                                                s.get("country") or "US"))
+                got.append(contact_from_grant(s["person"], org, s.get("url", ""), why,
+                                              s.get("country") or "US"))
+            for g in got:
+                g.relation = (("author" if src == "publications" else "study") if relevant
+                              else "organisation")
+                g.about = html.unescape(TAGS.sub("", s.get("title") or ""))[:150]
+            found += got
 
-        # No published email from the lead's own signals: look for a
-        # corresponding author at the same organisation on the same disease.
-        if not any(f.channel == "email" for f in found) and disease:
-            found += corresponding_authors_for_org(org, disease, why, lead_country=country)
+        # No published email from the lead's own evidence: look for a
+        # corresponding author at the same organisation on the same topic. A
+        # colleague, not the author of the need, so it is labelled that way.
+        topic = lead.get("_disease") or disease
+        if not any(f.channel == "email" for f in found) and topic:
+            for r in corresponding_authors_for_org(org, topic, why, lead_country=country,
+                                                   focus=focus):
+                r.relation = "organisation"
+                r.notes.append("not the author of the stated need — same organisation "
+                               "and topic; check their work is relevant before writing")
+                found.append(r)
 
+        found.sort(key=lambda r: RELATION_RANK.get(r.relation, 9))
         for r in found:
             r.org_key = key
             if suppressed(r, suppression):

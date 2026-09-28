@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, REGISTRY_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
+import { api, REGISTRY_LABEL, RELATION_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
 
 type Tab = "leads" | "contacts" | "method";
 const DIM_LABEL: Record<string, string> = {
@@ -231,6 +231,10 @@ function FitBlock({ fit }: { fit: NonNullable<Lead["fit"]> }) {
     <div className="fit">
       <div><span className={`pill ${FIT_CLASS[fit.label]}`}>{fit.label === "Geographic opening" ? fit.label : `${fit.label} fit`}</span>{" "}
         <span className="muted small">{fit.summary} by this dataset</span></div>
+      {fit.anchor && (
+        <p className="small" style={{ margin: "6px 0 0" }}>Rests on: <a href={fit.anchor.url} target="_blank"
+          rel="noopener noreferrer">{fit.anchor.title}</a></p>
+      )}
       <ul>
         {fit.met.map((r) => <li key={r.need} className="met">✓ Needs {r.text} — <strong>{r.why}</strong></li>)}
         {fit.unmet.map((r) => <li key={r.need} className="unmet">✗ Needs {r.text} — {r.why}</li>)}
@@ -306,7 +310,9 @@ function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contac
           <tbody>
             {ok.map((c, i) => (
               <tr key={i}>
-                <td><strong>{c.person_name}</strong><div className="muted small">{c.person_role} · {c.org_display}</div></td>
+                <td><strong>{c.person_name}</strong><div className="muted small">{c.person_role} · {c.org_display}</div>
+                  {c.relation && <div className={`small rel-${c.relation}`}>{RELATION_LABEL[c.relation]}</div>}
+                  {c.about && <div className="muted small">Re: {c.about}</div>}</td>
                 <td className="mono">{c.value}<div className="muted small">{c.channel}</div></td>
                 <td className="small">
                   <a href={c.provenance.source_url} target="_blank" rel="noopener noreferrer">{c.provenance.publisher || "source"}</a>

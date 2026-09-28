@@ -56,7 +56,7 @@ from . import sources_eu_uk as eu_uk
 from .query import DATA_TYPES, SUPPLY, SearchQuery, core_term, supply_label, supply_pitch
 from .http import get
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 REPORTER = "https://api.reporter.nih.gov/v2/projects/search"
 CTGOV = "https://clinicaltrials.gov/api/v2/studies"
@@ -65,14 +65,27 @@ Progress = Callable[[str], None]
 
 
 # ---------------------------------------------------------- need taxonomy
+_PEOPLE = r"(population|group|patient|minorit\w*|communit\w*|individual|people|participant|cohort|ethnicit\w*|demographic)s?"
+
 # code -> (human description, weight toward stated_need_fit, patterns)
 NEEDS: dict[str, tuple[str, float, list[str]]] = {
     "diverse_population": (
         "data from an under-represented or non-Western population", 0.60,
-        [r"under-?represent\w*", r"\bdiverse (population|cohort|patient)",
-         r"(ethnic|racial) (divers|minorit|dispar)\w*", r"non-?(white|western|european|caucasian)",
-         r"\b(asian|south asian|indian|african|hispanic|latin\w*) (population|patient|cohort)s?",
-         r"lack of divers\w*"]),
+        # About people, and framed as a gap. "Underrepresented in curricula",
+        # "underrepresented radiologists" and "in a racially diverse cohort"
+        # (they have it) are not a need for data.
+        [rf"under-?represented {_PEOPLE}",
+         rf"{_PEOPLE} ([\w()-]+ ){{0,5}}?((are|were|is|remain\w*|being) )?(\w+ )?under-?represented",
+         rf"(validat\w*|studies|study|research|evaluat\w*|test\w*|comparisons?) ([\w,-]+ ){{0,6}}"
+         rf"(in|on|across) ([\w,-]+ ){{0,2}}(ethnically |racially )?diverse {_PEOPLE}",
+         rf"(ethnically |racially )?diverse {_PEOPLE} (\w+ ){{0,3}}(is|are) (required|needed|necessary|warranted)",
+         r"(challeng\w*|lack\w*|limited|need\w*|few) ([\w,-]+ ){0,8}(ethnic|racial) diversity",
+         rf"(lack|limited|few|need|more|greater|broader|increas\w*|absence) (\w+ ){{0,3}}diverse {_PEOPLE}",
+         rf"generali[sz]\w* (\w+ ){{0,4}}(diverse|other|different|non-?western) {_PEOPLE}",
+         r"(ethnic|racial) (diversity|minorit\w*) (\w+ ){0,3}(lack\w*|limited|needed|absent|under)",
+         r"lack of (ethnic |racial )?divers\w*",
+         r"non-?(white|western|european|caucasian) (population|patient|cohort|participant)s? "
+         r"(\w+ ){0,4}(lack\w*|limited|few|needed|absent|under-?represented|excluded)"]),
     "external_validation": (
         "an independent cohort for external validation", 0.50,
         [r"external(ly)? validat\w*", r"independent (cohort|validation|dataset)",
@@ -120,23 +133,55 @@ LIMITATION_QUERY = (
     '"limited follow-up" OR "longer follow-up" OR "independent cohort")')
 
 SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+# Europe PMC glues structured-abstract headings to the text ("deployment.MethodsWe
+# performed ..."), which turns a whole abstract into one "sentence".
+_HEADS = (r"(Background|Objectives?|Aims?|Purpose|Introduction|Rationale and objectives|"
+          r"Materials and methods|Methods?|Results?|Findings|Conclusions?|Interpretation|"
+          r"Significance|Level of evidence)")
+HEADINGS = re.compile(rf"(?<=[a-z0-9.!?:)])\s*{_HEADS}(?=[A-Z:])")
 
 # These phrases also appear in methods and results ("using real-world data from
 # the registry", "correlated with longer follow-up duration"), where they mean
 # the authors HAVE the data. Count them only in a sentence that frames a gap.
 NEEDS_CUE = {"real_world_data", "longitudinal_gap", "generalisability", "external_validation",
              *(f"data_{c}" for c in DATA_TYPES)}
+# "Limited" only as a verdict ("is limited", "limited data"), not as an
+# adjective for the method ("limited sequence MRI", "limited-field").
 GAP_CUE = re.compile(
-    r"\b(limit\w*|lack\w*|scarce|scarcity|insufficient|paucity|few|only|small|restricted|"
+    r"\b(limitations?|limits?|(is|are|was|were|remains?|be) (\w+ )?limited|"
+    r"limited ([\w-]+ )?(data|number|numbers|availability|access|evidence|samples?|cohorts?|sizes?|"
+    r"generali\w*|external|follow\w*|studies|research|representation|diversity)|limiting|"
+    r"concerns?|reduc\w* generali\w*|overlook\w*|lack\w*|scarce|scarcity|insufficient|paucity|few|small|restricted|"
     r"needed|need|required|warrant\w*|should be|future|further|remain\w*|unknown|unclear|"
     r"underexplored|under-explored|not (been |yet )?(well )?(studied|established|known|"
-    r"validated)|however|although|constrain\w*|caution|compromis\w*|hinder\w*|gap)\b", re.I)
+    r"validated)|however|although|constrain\w*|caution|compromis\w*|hinder\w*|gap|"
+    r"unavailab\w*|not available|missing|absen\w*|incomplete|underutili[sz]\w*|"
+    r"multi-?cent(er|re|ric)\w*|multi-?institution\w*|multi-?site|incorporat\w*)\b", re.I)
+# Data-type needs are the easiest to find in methods text ("we segmented CT
+# scans ... to overcome the limitations of ..."), so their gap cue must sit
+# within a few words of the data-type phrase, not merely in the same sentence.
+CUE_WINDOW_WORDS = 8
+
+
+def _cued_near(low: str, m: re.Match) -> bool:
+    before = low[:m.start()].split()[-CUE_WINDOW_WORDS:]
+    after = low[m.end():].split()[:CUE_WINDOW_WORDS]
+    return bool(GAP_CUE.search(" ".join(before + [m.group(0)] + after)))
+
+
+def sentences(text: str) -> list[str]:
+    out = []
+    for part in SENT.split(text or ""):
+        # re.split keeps the captured heading; drop it, keep the text.
+        pieces = HEADINGS.split(part)
+        out += [p for i, p in enumerate(pieces) if i % 2 == 0 and p.strip()]
+    return out
 
 
 def detect_needs(text: str) -> dict[str, str]:
     """Return {need_code: verbatim sentence} for every stated gap in text."""
     out: dict[str, str] = {}
-    for sent in SENT.split(text or ""):
+    for sent in sentences(text):
         low = sent.lower()
         cued = bool(GAP_CUE.search(low))
         for code, (_, _, pats) in NEEDS.items():
@@ -144,7 +189,10 @@ def detect_needs(text: str) -> dict[str, str]:
                 continue
             if code in NEEDS_CUE and not cued:
                 continue
-            if any(re.search(p, low) for p in pats):
+            hits = [m for pat in pats for m in re.finditer(pat, low)]
+            if code.startswith("data_"):
+                hits = [m for m in hits if _cued_near(low, m)]
+            if hits:
                 out[code] = sent.strip()[:400]
     return out
 

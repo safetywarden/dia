@@ -160,17 +160,57 @@ def match_lead(lead: dict, p: DatasetProfile, weights: dict[str, float]) -> dict
     for r in rows["met"]:
         miss *= 1 - weights.get(r["need"], 0.2)
     score = 1 - miss if rows["met"] else 0.0
-    # Geography is met by construction for any dataset from the right place, so
-    # a fit must rest on at least one need the organisation actually stated.
-    text_met = [r for r in rows["met"] if r["need"] not in ("geographic_gap", "asia_absent")]
+    met_codes = {r["need"] for r in rows["met"]}
+    # A lead without its signals (an older document) is judged as one piece of work.
+    signals = lead.get("signals") or [{"source": "", "title": "", "url": "",
+                                       "needs": lead.get("evidence") or lead.get("needs") or {}}]
+    anchor = _anchor(signals, met_codes)
     # A programme with no sites where this data comes from is a commercial opening
     # in its own right (e.g. US evidence for an FDA filing) -- but a different kind
     # of fit from a stated data gap, so it gets its own label rather than "Partial".
-    geo = any(r["need"] == "geographic_gap" for r in rows["met"])
-    label = ("Strong" if len(text_met) >= 2 or (text_met and len(rows["met"]) >= 3) else
-             "Partial" if text_met else "Geographic opening" if geo else "Context only")
-    return {"score": round(score, 3), "label": label, **rows,
-            "summary": f"{len(rows['met'])} of {sum(len(v) for v in rows.values())} stated needs met"}
+    geo = "geographic_gap" in met_codes
+    label = ("Strong" if anchor and anchor["strong"] else
+             "Partial" if anchor else "Geographic opening" if geo else "Context only")
+    out = {"score": round(score, 3), "label": label, **rows,
+           "summary": f"{len(rows['met'])} of {sum(len(v) for v in rows.values())} stated needs met"}
+    if anchor:
+        out["anchor"] = {k: anchor[k] for k in ("source", "title", "url", "needs")}
+    return out
+
+
+GEO = ("geographic_gap", "asia_absent")
+
+
+def _anchor(signals: list[dict], met: set[str]) -> dict | None:
+    """The one piece of work the fit rests on.
+
+    Needs are pooled per organisation, so without this an unrelated paper's
+    "diverse population" plus a trial's missing sites could add up to "Strong"
+    for work nobody at the organisation connected. A fit is judged on the
+    single paper, grant or trial that states the most needs the dataset meets.
+    Geography is met by construction for any dataset from the right place, so
+    it never makes a fit on its own; one sentence that trips two patterns is
+    still one stated need, except when it names the data type itself.
+
+    Strong: one piece of work states two needs the dataset meets, in two
+    sentences, or names the dataset's data type among them.
+    """
+    best = None
+    for s in signals:
+        codes = [c for c in (s.get("needs") or {}) if c in met and c not in GEO]
+        if not codes:
+            continue
+        sentences = {s["needs"][c] for c in codes}
+        names_type = any(c.startswith("data_") for c in codes)
+        strong = len(sentences) >= 2 or (names_type and len(codes) >= 2)
+        rank = (strong, len(sentences), len(codes), s.get("source") == "publications")
+        if best is None or rank > best["rank"]:
+            best = {"rank": rank, "strong": strong, "source": s.get("source", ""),
+                    "title": s.get("title", ""), "url": s.get("url", ""), "needs": codes}
+    return best
+
+
+LABEL_ORDER = {"Strong": 0, "Partial": 1, "Geographic opening": 2, "Context only": 3}
 
 
 def apply_fit(doc: dict, p: DatasetProfile, weights: dict[str, float]) -> dict:
@@ -178,7 +218,8 @@ def apply_fit(doc: dict, p: DatasetProfile, weights: dict[str, float]) -> dict:
     for lead in doc["leads"]:
         lead["fit"] = match_lead(lead, p, weights)
         lead["match_score"] = round(100 * (0.6 * lead["fit"]["score"] + 0.4 * lead["score"] / 100), 1)
-    doc["leads"].sort(key=lambda l: (l["match_score"], l["score"]), reverse=True)
+    doc["leads"].sort(key=lambda l: (-LABEL_ORDER[l["fit"]["label"]], l["match_score"], l["score"]),
+                      reverse=True)
     doc["dataset"] = p.to_dict()
     labels = [l["fit"]["label"] for l in doc["leads"]]
     doc["summary"]["fit"] = {k: labels.count(k)

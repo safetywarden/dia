@@ -212,12 +212,13 @@ def export_contacts(run_id: int, strict: bool = False, who: str = Depends(user))
         w = csv.writer(buf)
         w.writerow(["organisation", "person", "role", "channel", "value", "source_url",
                     "source_type", "lawful_basis", "jurisdiction", "retrieved_at",
-                    "why_this_person"])
+                    "why_this_person", "relation_to_need", "about"])
         for c in ok:
             p = c.data["provenance"]
             w.writerow([c.org_display, c.person_name, c.person_role, c.channel, c.value,
                         c.source_url, c.source_type, c.lawful_basis, c.jurisdiction,
-                        p.get("retrieved_at", ""), c.data.get("why_this_person", "")])
+                        p.get("retrieved_at", ""), c.data.get("why_this_person", ""),
+                        c.data.get("relation", ""), c.data.get("about", "")])
         slug = "".join(ch if ch.isalnum() else "_" for ch in run.disease.lower())
         return StreamingResponse(
             iter([buf.getvalue()]), media_type="text/csv",

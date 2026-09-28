@@ -46,7 +46,9 @@ export type Lead = {
 
 export type FitRow = { need: string; text: string; evidence: string; why: string };
 export type Fit = { score: number; label: "Strong" | "Partial" | "Geographic opening" | "Context only"; summary: string;
-  met: FitRow[]; unmet: FitRow[]; unknown: FitRow[] };
+  met: FitRow[]; unmet: FitRow[]; unknown: FitRow[];
+  /** The one paper, grant or trial the fit rests on. */
+  anchor?: { source: string; title: string; url: string; needs: string[] } };
 
 export type DatasetProfile = {
   name: string; partner: string; origin: string[]; diseases: string[]; data_types: string[];
@@ -62,6 +64,9 @@ export type Contact = {
   org_display: string; org_key: string; person_name: string; person_role: string;
   channel: "email" | "phone" | "none"; value: string | null; why_this_person: string;
   exportable: boolean; gate_reason: string; suppressed: boolean; notes: string[];
+  /** author: wrote the paper stating the need · study: contact for the trial/grant stating it ·
+   *  organisation: same organisation, different work (older runs have no value). */
+  relation?: "author" | "study" | "organisation"; about?: string;
   provenance: {
     source_url: string; source_type: string; lawful_basis: string; retrieved_at: string;
     verbatim_snippet: string; jurisdiction: string; publisher: string; country: string;
@@ -84,6 +89,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return (res.status === 204 ? null : res.json()) as T;
 }
+
+export const RELATION_LABEL: Record<string, string> = {
+  author: "Author of the stated need", study: "Contact for the work stating the need",
+  organisation: "Same organisation, different work — check relevance",
+};
 
 export const SOURCE_LABEL: Record<string, string> = {
   publications: "Paper", grants: "Grant", trials: "Trial",

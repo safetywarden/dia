@@ -5,8 +5,11 @@ W = {k: v[1] for k, v in dia.NEEDS.items()}
 
 
 def lead(*needs, score=50.0, disease="glaucoma"):
-    return {"needs": {n: dia.NEEDS[n][0] for n in needs}, "evidence": {n: "…" for n in needs},
-            "score": score, "_disease": disease}
+    """One paper stating each need in its own sentence."""
+    said = {n: f"The paper's sentence about {n}." for n in needs}
+    return {"needs": {n: dia.NEEDS[n][0] for n in needs}, "evidence": said,
+            "score": score, "_disease": disease,
+            "signals": [{"source": "publications", "title": "Paper", "url": "u1", "needs": said}]}
 
 
 US_EHR = DatasetProfile(name="US ophthalmology EHR", origin=["US"], diseases=["glaucoma"],
@@ -72,6 +75,41 @@ def test_geography_alone_is_not_a_fit():
     f = match_lead(lead("geographic_gap"), US_EHR, W)
     assert f["met"] and f["label"] == "Geographic opening"
     assert match_lead(lead("geographic_gap", "longitudinal_gap"), US_EHR, W)["label"] == "Partial"
+
+
+IMAGING = DatasetProfile(name="Imaging archive", origin=["IN"], diseases=["lung cancer"],
+                         data_types=["imaging", "reports"], diverse=True, patients=100000)
+
+
+def test_strong_must_rest_on_one_piece_of_work():
+    """Run #30: an unrelated paper's 'diverse population' plus a trial's missing
+    sites added up to Strong for work nobody at the organisation connected."""
+    pooled = {"needs": {"diverse_population": "", "geographic_gap": "", "asia_absent": "",
+                        "small_sample": ""},
+              "score": 50.0, "_disease": "lung cancer",
+              "signals": [
+                  {"source": "publications", "title": "Curricula paper", "url": "p1",
+                   "needs": {"diverse_population": "Underrepresented groups in radiology training."}},
+                  {"source": "publications", "title": "Another paper", "url": "p2",
+                   "needs": {"small_sample": "A small sample limits this study."}},
+                  {"source": "trials", "title": "Drug trial", "url": "t1",
+                   "needs": {"geographic_gap": "NCT1 has no sites in India", "asia_absent": "NCT1 has no sites in Asia"}}]}
+    f = match_lead(pooled, IMAGING, W)
+    assert f["label"] == "Partial"
+    assert f["anchor"]["url"] in ("p1", "p2") and "geographic_gap" not in f["anchor"]["needs"]
+
+
+def test_one_sentence_is_one_stated_need_unless_it_names_the_data():
+    same = "Generalizability across diverse populations remains a challenge."
+    one = {"needs": {"diverse_population": "", "generalisability": ""}, "score": 50.0, "_disease": "lung cancer",
+           "signals": [{"source": "publications", "title": "Review", "url": "p1",
+                        "needs": {"diverse_population": same, "generalisability": same}}]}
+    assert match_lead(one, IMAGING, W)["label"] == "Partial"
+    both = "Future work should incorporate multicentre imaging data to improve generalizability."
+    typed = {"needs": {"data_imaging": "", "generalisability": ""}, "score": 50.0, "_disease": "lung cancer",
+             "signals": [{"source": "publications", "title": "Radiomics", "url": "p1",
+                          "needs": {"data_imaging": both, "generalisability": both}}]}
+    assert match_lead(typed, IMAGING, W)["label"] == "Strong"
 
 
 def test_search_focus_narrows_buyer_search_to_data_types():
