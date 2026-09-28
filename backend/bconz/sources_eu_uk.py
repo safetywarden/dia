@@ -199,13 +199,27 @@ def harvest_cordis(q, limit: int, log, Signal) -> list:
         title, objective = p.get("title", ""), p.get("objective", "")
         if not q.matches_title_or_body(f"{title} {p.get('keywords', '')}", objective):
             continue
-        coord = next((o for o in _as_list((p.get("relations", {}).get("associations") or {})
-                                          .get("organization"))
-                      if (o.get("@attributes") or {}).get("type") == "coordinator"), None)
+        partners = _as_list((p.get("relations", {}).get("associations") or {}).get("organization"))
+        coord = next((o for o in partners if (o.get("@attributes") or {}).get("type") == "coordinator"), None)
+        # Companies are usually partners, not coordinators, in Horizon projects.
+        for o in partners:
+            cname = o.get("legalName") or o.get("shortName") or ""
+            if o is coord or not orgs.is_company(cname):
+                continue
+            cc = ((o.get("address") or {}).get("country") or "").upper()[:2]
+            out.append(Signal(
+                source="grants", org_raw=orgs.display_name(cname), date=(p.get("startDate") or "")[:10],
+                title=title.strip(), url=f"https://cordis.europa.eu/project/id/{p.get('id')}#{orgs.org_key(cname)}",
+                snippet=f"Company partner in Horizon project {p.get('acronym') or p.get('id')}",
+                country=cc if cc != "UK" else "GB", sponsor_class="INDUSTRY",
+                needs={"company_grant": f"EU-funded company R&D: {title}"},
+                extra={"registry": "CORDIS", "funder": "European Commission", "commercial": True,
+                       "end": (p.get("endDate") or "")[:10]}))
         if not coord:
             continue
         name = coord.get("legalName") or coord.get("shortName") or ""
         country = ((coord.get("address") or {}).get("country") or "").upper()[:2]
+        company = orgs.is_company(name)
         eur = float(p.get("ecMaxContribution") or 0)
         end = (p.get("endDate") or "")[:10]
         out.append(Signal(
@@ -214,8 +228,10 @@ def harvest_cordis(q, limit: int, log, Signal) -> list:
             snippet=f"Horizon project {p.get('acronym') or p.get('id')} — EU contribution "
                     f"€{eur:,.0f}" + (f", runs to {end}" if end else ""),
             country=country if country != "UK" else "GB",
-            needs={"funded_programme": f"Funded project: {title}"},
-            extra={"registry": "CORDIS", "funder": "European Commission", "award": eur,
+            needs={"company_grant": f"EU-funded company R&D: {title}"} if company
+                  else {"funded_programme": f"Funded project: {title}"},
+            sponsor_class="INDUSTRY" if company else "",
+            extra={"registry": "CORDIS", "funder": "European Commission", "award": eur, "commercial": company,
                    "currency": "EUR", "award_usd": eur * TO_USD["EUR"], "end": end}))
     log(f"EU funding (CORDIS): {len(out)} signed projects")
     return out[:limit]
@@ -262,14 +278,19 @@ def harvest_ukri(q, limit: int, log, Signal) -> list:
         gbp = float(((f or {}).get("valuePounds") or {}).get("amount", 0) or 0)
         end, start = _ms_date((f or {}).get("end")), _ms_date((f or {}).get("start"))
         funder = (((f or {}).get("funder") or {}).get("name")) or "UKRI"
+        # Innovate UK also funds universities (KTPs); a plainly academic lead is not a company.
+        company = orgs.is_company(org["name"]) or (
+            "innovate" in funder.lower() and not orgs.ACADEMIC_NAME.search(org["name"]))
         out.append(Signal(
             source="grants", org_raw=orgs.display_name(org["name"]), date=start,
             title=(p.get("title") or "").strip(),
             url=f"https://gtr.ukri.org/projects?ref={p.get('grantReference', '')}",
             snippet=f"{p.get('grantReference', '')} — {funder}, award £{gbp:,.0f}"
                     + (f", runs to {end}" if end else ""),
-            country="GB", needs={"funded_programme": f"Funded project: {p.get('title', '')}"},
-            extra={"registry": "UKRI", "funder": funder, "award": gbp, "currency": "GBP",
+            country="GB", sponsor_class="INDUSTRY" if company else "",
+            needs={"company_grant": f"{funder} company R&D: {p.get('title', '')}"} if company
+                  else {"funded_programme": f"Funded project: {p.get('title', '')}"},
+            extra={"registry": "UKRI", "funder": funder, "award": gbp, "currency": "GBP", "commercial": company,
                    "award_usd": gbp * TO_USD["GBP"], "end": end}))
         if len(out) >= limit:
             break

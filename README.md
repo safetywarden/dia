@@ -97,7 +97,27 @@ All routes except `/health` need `Authorization: Bearer $DIA_API_TOKEN`.
 | US | — | NIH RePORTER | PI names only (no email published) |
 | EU | CTIS | CORDIS (Horizon) | **None from CTIS** — its investigator/CRO emails are published under trial-transparency law, not for contact |
 | UK | ISRCTN | UKRI Gateway to Research | ISRCTN contacts the registrant marked **Public** |
-| India | **CTRI — not connected** | — | — |
+| India | **CTRI — not connected** | BIRAC (startup grants) | — (BIRAC publishes company names only) |
+
+### Commercial buyers
+
+Papers find people who *need* data; companies are the ones who *pay*. Companies rarely
+write "we lack data", so DIA reads what they do instead. Each company lead is tagged with a
+buyer type (startup/SME, large medtech, pharma, CRO, big tech) and an intent: **Active
+buyer** (two or more commercial signals, one in the last two years) or **Likely buyer** (one).
+
+| Signal | Source | Markets | Contacts PCIA may use |
+|---|---|---|---|
+| Cleared AI product | FDA AI-enabled device list + openFDA 510(k) | Global applicants: US, EU, CN, KR, JP, TW, IL, IN | Contact at the company in the 510(k) summary (21 CFR 807.92); consultants' addresses are dropped |
+| Startup R&D grant | NIH SBIR/STTR | US | PI name only |
+| Startup R&D grant | BIRAC (BIG, SBIRI, BIPP, PACE, IIPME, SEED, AcE, EDGE) | India | None published |
+| Company R&D grant | Innovate UK (via UKRI GtR); CORDIS company partners | UK, EU | — |
+| Company research | Europe PMC company-authored papers | Global, incl. China, Korea, Japan, India | Corresponding author, only if at the company |
+
+Checked and not used: WHO ICTRP (robots.txt forbids automated access; partner data service
+available on request), Health AI Register (API needs an account), Korea MFDS (needs a
+data.go.kr key), Japan PMDA, Singapore HSA, China NMPA and CDSCO (no machine-readable
+register).
 
 A trial registered in several registries is counted once (matched on NCT, EU CT/EudraCT
 and ISRCTN numbers only — never on shared grant or protocol codes). CTIS lists EU sites

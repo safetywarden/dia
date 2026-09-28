@@ -32,3 +32,18 @@ def get(url: str, as_json: bool = True, retries: int = 2, data: dict | None = No
                 return None
             time.sleep(1.2 * (attempt + 1))
     return None
+
+
+def get_bytes(url: str, retries: int = 2) -> bytes | None:
+    """Binary GET (PDFs). None after the last failure."""
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}),
+                                        timeout=TIMEOUT) as r:
+                return r.read()
+        except Exception as exc:
+            if attempt == retries:
+                print(f"    ! {type(exc).__name__} {url[:70]}", file=sys.stderr)
+                return None
+            time.sleep(1.2 * (attempt + 1))
+    return None

@@ -27,6 +27,9 @@ THE DESIGN DECISION THAT MATTERS
         role, email and phone so people can enquire about the study.
       * NIH RePORTER principal investigators. Published under public-funding
         transparency obligations.
+      * FDA 510(k) summary contacts. 21 CFR 807.92 requires the submitter's
+        contact person; the FDA publishes the summary. Only addresses at the
+        company itself are used, never the regulatory consultant's.
 
     This is narrower than a bought list. It is also better, because the person
     it finds is the author of the exact sentence in which they said they lacked
@@ -43,13 +46,15 @@ WHAT IS DELIBERATELY NOT IMPLEMENTED
     NOT EXPORTABLE and the export function refuses to emit it. That gate is
     structural, not a convention someone has to remember.
 
-SOURCES: Europe PMC, ClinicalTrials.gov API v2, NIH RePORTER. No API keys.
+SOURCES: Europe PMC, ClinicalTrials.gov API v2, ISRCTN, NIH RePORTER, FDA 510(k)
+summaries. No API keys.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import html
+import io
 import json
 import re
 import sys
@@ -64,9 +69,9 @@ from typing import Callable
 
 from . import orgs
 from .query import DATA_TYPES
-from .http import get as _get
+from .http import get as _get, get_bytes as _get_bytes
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 Progress = Callable[[str], None]
 
 
@@ -584,6 +589,66 @@ def contacts_from_trial(nct: str, lead_org: str, why: str,
     return out
 
 
+# ------------------------------------------------ source: FDA 510(k) summary
+
+def contacts_from_510k(number: str, lead_org: str, why: str, lead_country: str = "",
+                       contact_name: str = "", title: str = "") -> list[ContactRecord]:
+    """The contact a company published in its 510(k) summary.
+
+    21 CFR 807.92 requires the summary to give the submitter's name, address,
+    telephone and a contact person, and the FDA publishes it so the public can
+    enquire about the device. Summaries are often prepared by regulatory
+    consultants: an address that isn't at the company is the consultant's and
+    is never used -- the company is the buyer, not its adviser.
+    """
+    from pypdf import PdfReader
+
+    url = f"https://www.accessdata.fda.gov/cdrh_docs/pdf{number[1:3]}/{number}.pdf"
+    page_url = f"https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpmn/pmn.cfm?ID={number}"
+    out: list[ContactRecord] = []
+
+    def name_only(note: str) -> list[ContactRecord]:
+        if not contact_name:
+            return []
+        return [ContactRecord(
+            org_display=lead_org, org_key="", person_name=contact_name,
+            person_role="contact named in the 510(k)", channel="none", value=None,
+            provenance=_prov(page_url, SourceType.REGISTRY_PUBLISHED_CONTACT,
+                             f"510(k) {number} contact: {contact_name}", "FDA 510(k) database",
+                             ("lead_country", lead_country)),
+            why_this_person=why, relation="study", about=title, notes=[note])]
+
+    raw = _get_bytes(url) if number.startswith("K") else None
+    time.sleep(0.3)
+    if not raw:
+        return name_only("no 510(k) summary document to read")
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        text = " ".join((p.extract_text() or "") for p in reader.pages[:8])
+    except Exception:
+        return name_only("510(k) summary could not be read")
+    text = re.sub(r"\s+", " ", text)
+    i = text.lower().find("510(k) summary")
+    seg = text[i:i + 3500] if i >= 0 else text[:3500]
+    people = [{"firstName": " ".join(contact_name.split()[:-1]), "lastName": contact_name.split()[-1]}] \
+        if contact_name else []
+    for em in dict.fromkeys(e.rstrip(".,;") for e in EMAIL_RE.findall(seg)):
+        if at_org(em, None, lead_org) is not True:
+            continue                         # the consultant who prepared the file
+        j = seg.find(em)
+        out.append(ContactRecord(
+            org_display=lead_org, org_key="", person_name=(_author_for_email(em, people) or
+                                                           "Company contact (510(k) summary)"),
+            person_role="contact named in the 510(k) summary", channel="email", value=em,
+            provenance=_prov(url, SourceType.REGISTRY_PUBLISHED_CONTACT, seg[max(0, j - 200):j + 60],
+                             "FDA 510(k) summary (21 CFR 807.92)", ("email", em),
+                             ("lead_country", lead_country)),
+            why_this_person=why, relation="study", about=title,
+            notes=[f"published by the company in 510(k) {number}"]))
+    return out or name_only("the 510(k) summary gives no address at the company "
+                            "(often a regulatory consultant's); approach via the company's website")
+
+
 # ------------------------------------------------------ source: ISRCTN (UK)
 
 def contacts_from_isrctn(isrctn: str, lead_org: str, why: str,
@@ -825,6 +890,8 @@ def suppressed(r: ContactRecord, suppression: set[str]) -> bool:
 
 
 GEO_NEEDS = {"geographic_gap", "asia_absent"}
+COMPANY_BUYERS = {"startup", "pharma", "medtech", "cro", "bigtech"}
+MAX_EMAILS_PER_LEAD = 5
 RELATION_RANK = {"author": 0, "study": 1, "organisation": 2}
 
 
@@ -857,7 +924,14 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
     """Resolve lawful contacts for the top N leads of a DIA leads document."""
     log = log or (lambda m: print(f"  {m}", file=sys.stderr))
     suppression = suppression or set()
-    leads = doc.get("leads", [])[:top]
+    # The top leads by demand, plus the top commercial buyers: companies pay for
+    # data but rarely rank high on stated need, so they get their own quota.
+    all_leads = doc.get("leads", [])
+    leads = all_leads[:top]
+    taken = {l.get("org_key") for l in leads}
+    buyers = sorted((l for l in all_leads if l.get("buyer_intent") and l.get("org_key") not in taken),
+                    key=lambda l: (l.get("buyer_intent") != "Active buyer", -(l.get("match_score") or l.get("score") or 0)))
+    leads += buyers[:top]
     disease = doc.get("disease", "")
     recs: list[ContactRecord] = []
 
@@ -872,6 +946,9 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
         log(f"[{i}/{len(leads)}] {org[:52]}")
 
         found: list[ContactRecord] = []
+        # A company buyer is approached at the company: an academic co-author
+        # on its paper is not the buyer.
+        company = bool(lead.get("buyer_intent")) and lead.get("buyer_type") in COMPANY_BUYERS
         for s, relevant in evidence_first(lead):
             fit_run = "fit" in lead
             if fit_run and not relevant:
@@ -883,7 +960,7 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
             if src == "publications":
                 m = re.search(r"/MED/(\d+)", s.get("url", ""))
                 if m:
-                    got += contacts_from_publication(m.group(1), org, why, country)
+                    got += contacts_from_publication(m.group(1), org, why, country, require_org=company)
             elif src == "trials":
                 extra = s.get("extra", {}) or {}
                 if extra.get("nct"):
@@ -892,6 +969,11 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
                     got += contacts_from_isrctn(extra["isrctn"], org, why, country)
                 # CTIS publishes investigator and CRO emails under EU trial
                 # transparency law, not for contact. Deliberately not used.
+            elif src == "devices":
+                sub = (s.get("extra") or {}).get("submission", "")
+                if sub:
+                    got += contacts_from_510k(sub, org, why, country, s.get("person", ""),
+                                              (s.get("title") or "")[:150])
             elif src == "grants" and s.get("person"):
                 got.append(contact_from_grant(s["person"], org, s.get("url", ""), why,
                                               s.get("country") or "US"))
@@ -914,6 +996,10 @@ def resolve(doc: dict, top: int = 20, suppression: set[str] | None = None,
                 found.append(r)
 
         found.sort(key=lambda r: RELATION_RANK.get(r.relation, 9))
+        emails = [r for r in found if r.channel == "email"]
+        if len(emails) > MAX_EMAILS_PER_LEAD:            # a big company's many filings
+            drop = {id(r) for r in emails[MAX_EMAILS_PER_LEAD:]}
+            found = [r for r in found if id(r) not in drop]
         for r in found:
             r.org_key = key
             if suppressed(r, suppression):

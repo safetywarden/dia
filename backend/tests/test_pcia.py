@@ -109,7 +109,7 @@ def test_unrelated_trial_contacts_are_not_used_for_a_dataset_match(monkeypatch):
     calls = []
     monkeypatch.setattr(pcia, "contacts_from_trial", lambda *a, **k: calls.append("trial") or [])
     monkeypatch.setattr(pcia, "contacts_from_publication",
-                        lambda pmid, org, why, c="": calls.append(pmid) or [rec()])
+                        lambda pmid, org, why, c="", **k: calls.append(pmid) or [rec()])
     monkeypatch.setattr(pcia, "corresponding_authors_for_org", lambda *a, **k: [])
     recs = pcia.resolve({"leads": [_fit_lead()]}, log=lambda m: None)
     assert calls == ["2"]                              # only the paper stating the need
@@ -136,3 +136,18 @@ def test_plain_search_labels_colleagues_as_organisation(monkeypatch):
 def test_is_the_author_at_the_lead_organisation(email, aff, org, expected):
     author = {"authorAffiliationDetailsList": {"authorAffiliation": [{"affiliation": aff}]}} if aff else None
     assert pcia.at_org(email, author, org) is expected
+
+
+def test_company_buyer_contacts_must_be_at_the_company(monkeypatch):
+    seen = {}
+    def pub(pmid, org, why, c="", require_org=False):
+        seen["require_org"] = require_org
+        return []
+    monkeypatch.setattr(pcia, "contacts_from_publication", pub)
+    monkeypatch.setattr(pcia, "corresponding_authors_for_org", lambda *a, **k: [])
+    lead = {"org_display": "MIM Software Inc", "org_key": "mim software", "buyer_type": "startup",
+            "buyer_intent": "Active buyer",
+            "signals": [{"source": "publications", "url": "https://europepmc.org/article/MED/9", "title": "Paper",
+                         "needs": {"company_rnd": "Company research"}}]}
+    pcia.resolve({"leads": [lead]}, log=lambda m: None)
+    assert seen["require_org"] is True

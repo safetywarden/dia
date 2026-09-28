@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, REGISTRY_LABEL, RELATION_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
+import { api, BUYER_LABEL, COMMERCIAL, REGISTRY_LABEL, RELATION_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
 
 type Tab = "leads" | "contacts" | "method";
 const DIM_LABEL: Record<string, string> = {
@@ -91,6 +91,7 @@ export default function RunView({ id }: { id: number }) {
         <>
           <div className="tiles">
             <Tile n={s.organisations} l="Organisations" />
+            {s.commercial && <Tile n={(s.commercial["Active buyer"] ?? 0) + (s.commercial["Likely buyer"] ?? 0)} l="Commercial buyers" />}
             {s.fit && <><Tile n={s.fit.Strong} l="Strong fit" /><Tile n={s.fit.Partial} l="Partial fit" />
               <Tile n={s.fit["Geographic opening"]} l="Geographic opening" /></>}
             <Tile n={s.tiers?.A} l="Tier A" />
@@ -131,13 +132,22 @@ function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
   const [newOnly, setNewOnly] = useState(false);
   const [q, setQ] = useState("");
   const anyNew = leads.some((l) => l.is_new);
+  const isBuyer = (l: Lead) => COMMERCIAL.has(l.buyer_type ?? "") && !!l.buyer_intent;
+  const nBuyers = leads.filter(isBuyer).length;
+  // Companies pay for data; researchers mostly state the need. Show buyers first when there are any.
+  const [view, setView] = useState<"buyers" | "research" | "all">(nBuyers ? "buyers" : "all");
+  const INTENT = { "Active buyer": 0, "Likely buyer": 1, "": 2 } as const;
 
   const shown = useMemo(() => leads.filter((l) =>
-    tiers.has(l.tier) && (type === "all" || l.org_type === type)
+    (view === "buyers" ? isBuyer(l) : view === "research" ? !isBuyer(l) && tiers.has(l.tier) : tiers.has(l.tier))
+    && (type === "all" || (l.buyer_type ?? l.org_type) === type)
     && (!fitOnly || (l.fit && l.fit.label !== "Context only"))
     && (!stated || Object.keys(l.evidence).some((k) => k in NEED_LABEL))
     && (!newOnly || l.is_new)
-    && (!q || l.org_display.toLowerCase().includes(q.toLowerCase()))), [leads, tiers, type, stated, newOnly, q, fitOnly]);
+    && (!q || l.org_display.toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => view === "buyers" ? INTENT[a.buyer_intent ?? ""] - INTENT[b.buyer_intent ?? ""] : 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [leads, tiers, type, stated, newOnly, q, fitOnly, view]);
 
   const toggle = (t: string) => setTiers((s) => {
     const n = new Set(s); if (n.has(t)) n.delete(t); else n.add(t); return n;
@@ -146,16 +156,19 @@ function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
   return (
     <>
       <div className="filters">
-        {["A", "B", "C"].map((t) => (
+        <button className="chip" aria-pressed={view === "buyers"} onClick={() => setView("buyers")}>Commercial buyers ({nBuyers})</button>
+        <button className="chip" aria-pressed={view === "research"} onClick={() => setView("research")}>Research demand</button>
+        <button className="chip" aria-pressed={view === "all"} onClick={() => setView("all")}>All</button>
+        <span className="muted small">·</span>
+        {view !== "buyers" && ["A", "B", "C"].map((t) => (
           <button key={t} className="chip" aria-pressed={tiers.has(t)} onClick={() => toggle(t)}>Tier {t}</button>
         ))}
         {isMatch && <button className="chip" aria-pressed={fitOnly} onClick={() => setFitOnly(!fitOnly)}>Hide context-only</button>}
         <button className="chip" aria-pressed={stated} onClick={() => setStated(!stated)}>Stated a data gap</button>
         {anyNew && <button className="chip" aria-pressed={newOnly} onClick={() => setNewOnly(!newOnly)}>New only</button>}
         <select value={type} onChange={(e) => setType(e.target.value)} style={{ width: "auto" }}>
-          <option value="all">All types</option><option value="industry">Industry</option>
-          <option value="academic">Academic</option><option value="hospital">Hospital</option>
-          <option value="government">Government</option>
+          <option value="all">All types</option>
+          {Object.entries(BUYER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         <input placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 200 }} />
         <span className="muted small">{shown.length} shown</span>
@@ -179,9 +192,10 @@ function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: num
       <div className="lead-head">
         <div>
           <h3>{l.org_display} <span className={`pill t${l.tier}`}>Tier {l.tier}</span>
+            {l.buyer_intent && <span className={`pill ${l.buyer_intent === "Active buyer" ? "tA" : "tB"}`}>{l.buyer_intent}</span>}
             {l.is_new && <span className="badge new">new</span>}</h3>
           <div className="muted small">
-            #{l.rank} · {l.org_type}{l.country && ` · ${l.country}`} · seen in{" "}
+            #{l.rank} · {BUYER_LABEL[l.buyer_type ?? ""] ?? l.org_type}{l.country && ` · ${l.country}`} · seen in{" "}
             {l.sources.map((s) => SOURCE_LABEL[s] ?? s).join(", ")}
             {contacts > 0 && <> · <button className="link" onClick={onContacts}>{contacts} contactable</button></>}
           </div>
@@ -201,6 +215,11 @@ function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: num
         ) : null)}
       </div>
 
+      {(l.commercial_evidence ?? []).length > 0 && (
+        <ul className="small commercial">
+          {l.commercial_evidence!.map((e) => <li key={e}>{e}</li>)}
+        </ul>
+      )}
       {stated.map(([labels, text]) => (
         <blockquote key={text}><strong>{labels}</strong>“{text}”</blockquote>
       ))}

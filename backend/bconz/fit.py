@@ -136,6 +136,13 @@ def _judge(code: str, p: DatasetProfile, disease: str | None) -> tuple[str, str]
         if p.prospective is None:
             return "unknown", "collection design not specified"
         return "unmet", "dataset is retrospective too"
+    if code == "ai_product_imaging":
+        if "imaging" in p.data_types:
+            return "met", "dataset includes imaging data" + (" with paired reports" if "reports" in p.data_types else "")
+        return ("unknown", "data types not specified") if not p.data_types else ("unmet", "dataset has no imaging data")
+    if code in ("ai_product", "company_grant", "company_rnd"):
+        # The work was found by searching for this dataset's topic and data types.
+        return "met", "their product work is on this dataset's topic"
     if code == "geographic_gap":
         # The gap was computed against this dataset's origin, so it is met by construction.
         return "met", f"dataset is from {supply_label(p.origin or list(ALL_ORIGINS))}"

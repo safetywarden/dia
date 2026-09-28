@@ -77,7 +77,7 @@ class RunIn(BaseModel):
     years: int = Field(3, ge=1, le=10)
     # Markets whose registries to search. Europe PMC and ClinicalTrials.gov are
     # global and always included.
-    regions: list[Literal["us", "eu", "uk"]] = Field(default_factory=lambda: ["us", "eu", "uk"])
+    regions: list[Literal["us", "eu", "uk", "in"]] = Field(default_factory=lambda: ["us", "eu", "uk", "in"])
 
 
 class SuppressIn(BaseModel):
@@ -295,7 +295,7 @@ class HarmIn(BaseModel):
 
 
 class MatchIn(BaseModel):
-    regions: list[Literal["us", "eu", "uk"]] = Field(default_factory=lambda: ["us", "eu", "uk"])
+    regions: list[Literal["us", "eu", "uk", "in"]] = Field(default_factory=lambda: ["us", "eu", "uk", "in"])
     top_contacts: int = Field(20, ge=0, le=60)
 
 

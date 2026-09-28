@@ -5,6 +5,7 @@ export type Run = {
     by_source?: Record<string, number>; tiers?: Record<string, number>; new_signals?: number;
     by_registry?: Record<string, number>; regions?: string[];
     fit?: Record<string, number>;
+    buyers?: Record<string, number>; commercial?: Record<string, number>;
   };
   created_by: string; watch_id: number | null; created_at: string; finished_at: string | null;
   diagnostics?: Record<string, { distinct: number; iqr: number; informative: boolean }>;
@@ -29,7 +30,7 @@ export const ORIGINS: [string, string][] = [
 ];
 
 export type Signal = {
-  source: "publications" | "grants" | "trials"; date: string; title: string; url: string;
+  source: "publications" | "grants" | "trials" | "devices"; date: string; title: string; url: string;
   snippet: string; person: string; person_role: string; country: string;
   needs: Record<string, string>; extra: Record<string, unknown>;
 };
@@ -42,6 +43,7 @@ export type Lead = {
   rationale: string[]; named_people: { name: string; role: string; source_url: string }[];
   opening_angle: string; signals: Signal[];
   fit?: Fit; match_score?: number;
+  buyer_type?: string; buyer_intent?: "Active buyer" | "Likely buyer" | ""; commercial_evidence?: string[];
 };
 
 export type FitRow = { need: string; text: string; evidence: string; why: string };
@@ -90,23 +92,31 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (res.status === 204 ? null : res.json()) as T;
 }
 
+export const BUYER_LABEL: Record<string, string> = {
+  startup: "Startup / SME", pharma: "Pharma", medtech: "Large medtech", cro: "CRO / imaging core lab",
+  bigtech: "Big tech", academic: "Academic", hospital: "Hospital", government: "Government",
+};
+export const COMMERCIAL = new Set(["startup", "pharma", "medtech", "cro", "bigtech"]);
+
 export const RELATION_LABEL: Record<string, string> = {
   author: "Author of the stated need", study: "Contact for the work stating the need",
   organisation: "Same organisation, different work — check relevance",
 };
 
 export const SOURCE_LABEL: Record<string, string> = {
-  publications: "Paper", grants: "Grant", trials: "Trial",
+  publications: "Paper", grants: "Grant", trials: "Trial", devices: "Cleared AI device",
 };
 
 /** Which registry a signal came from, for the evidence line. */
 export const REGISTRY_LABEL: Record<string, string> = {
   "ClinicalTrials.gov": "ClinicalTrials.gov", NIH: "NIH grant", CTIS: "EU trial (CTIS)",
   ISRCTN: "UK trial (ISRCTN)", CORDIS: "EU grant (Horizon)", UKRI: "UK grant (UKRI)",
+  FDA: "FDA clearance", "NIH SBIR/STTR": "US startup grant (SBIR/STTR)", BIRAC: "India startup grant (BIRAC)",
 };
 
 export const MARKETS = [
   { id: "us", label: "United States", note: "NIH grants" },
   { id: "eu", label: "European Union", note: "CTIS trials, Horizon grants" },
-  { id: "uk", label: "United Kingdom", note: "ISRCTN trials, UKRI grants" },
+  { id: "uk", label: "United Kingdom", note: "ISRCTN trials, UKRI and Innovate UK grants" },
+  { id: "in", label: "India & Asia", note: "BIRAC startup grants; Asian companies via FDA clearances and company research" },
 ] as const;

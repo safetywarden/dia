@@ -233,6 +233,9 @@ def org_key(name: str) -> str:
     # Registry-specific tails that name the same organisation.
     k = re.sub(r"\s+(research and development|r and d|r d|research development)$", "", k)
     k = re.sub(r"\s+the$", "", k)
+    # Company tails that registries add and papers drop ("Qure.Ai Technologies"
+    # in the FDA list is "Qure.ai" in an affiliation).
+    k = re.sub(r"(?<=\w)\s+(technologies|technology|solutions|holdings|co)$", "", k)
     # A university's medical school is the university for outreach purposes
     # ("Stanford University School of Medicine"). Only fold when the parent is
     # explicit or known: Baylor College of Medicine is not Baylor University.
@@ -240,7 +243,28 @@ def org_key(name: str) -> str:
                  r"faculty of medicine|school of public health|medical center)$", k)
     if m and ("university" in m.group(1) or m.group(1) in UNIVERSITY_SCHOOLS):
         k = UNIVERSITY_SCHOOLS.get(m.group(1), m.group(1))
-    return ALIASES.get(k, k)
+    k = ALIASES.get(k, k)
+    # Large companies file under many subsidiaries ("Siemens Medical Solutions
+    # USA", "Siemens Healthcare GmbH"); for outreach they are one buyer.
+    for rx, family in FAMILIES:
+        if rx.match(k):
+            return family
+    return k
+
+
+FAMILIES = [(re.compile(p), f) for p, f in [
+    (r"^siemens (healthineers|healthcare|medical)\b", "siemens healthineers"),
+    (r"^(ge|general electric) (healthcare|medical|precision|hualun|vingmed)\b|^gehc\b", "ge healthcare"),
+    (r"^(koninklijke )?philips\b", "philips"),
+    (r"^fujifilm\b", "fujifilm"),
+    (r"^canon medical\b", "canon medical"),
+    (r"^(shanghai |beijing |wuhan )?united imaging\b", "united imaging"),
+    (r"^samsung medison\b", "samsung medison"),
+    (r"^(shenzhen )?mindray\b", "mindray"),
+    (r"^medtronic\b", "medtronic"),
+    (r"^hologic\b", "hologic"),
+    (r"^dentsply sirona\b", "dentsply sirona"),
+]]
 
 
 UNIVERSITY_SCHOOLS = {"yale": "yale university", "harvard": "harvard university",
@@ -317,15 +341,68 @@ ACADEMIC_NAME = re.compile(r"\b(universit\w*|hospital\w*|school of|college|insti
                            r"medical cent(er|re)|clinic)\b", re.I)
 
 
+# Legal forms and name endings that mark a company, across the markets BCONZ
+# sells into: US/UK, EU (GmbH, S.L., B.V., AB, Oy, S.p.A.), India (Pvt Ltd),
+# China/Taiwan ("Co., Ltd"), Japan (K.K.), Korea ("Co., Ltd", "Corp").
+COMPANY = re.compile(
+    r"\b(inc|ltd|llc|l\.l\.c|gmbh|plc|corp|corporation|limited|pvt|private limited|"
+    r"co\.?,? ltd|k\.k|kk|s\.l\.u?|sl|s\.a\.s|sas|s\.r\.l|srl|s\.p\.a|spa|b\.v|bv|n\.v|a/s|ag|ab|oy|"
+    r"pty|pte|sdn bhd|technologies|pharma\w*|therapeutics|biotech\w*|biosciences?|"
+    r"medical systems|healthineers|healthcare ai|diagnostics|uab|sp\. z o\.o|oü|zrt|kft)(?!\w)\.?", re.I)
+
+
+def is_company(name: str) -> bool:
+    n = name or ""
+    if KNOWN_INDUSTRY.search(n):
+        return True
+    # "Abbott Northwestern Hospital" and "Philips University Hospital" are not companies.
+    return bool((KNOWN_LARGE.search(n) or COMPANY.search(n)) and not ACADEMIC_NAME.search(n))
+
+
+# Large buyers by kind. Everything else that is a company is a startup or SME:
+# the grant schemes that surface most of them (SBIR/STTR, BIRAC, Innovate UK,
+# EIC) are restricted to small companies anyway.
+LARGE = {
+    "pharma": r"pfizer|novartis|roche|genentech|merck|\bmsd\b|astrazeneca|\bgsk\b|glaxosmithkline|sanofi|"
+              r"bayer|boehringer|lilly|abbvie|bristol[- ]myers|johnson ?& ?johnson|janssen|takeda|astellas|"
+              r"daiichi|eisai|novo nordisk|amgen|gilead|biogen|regeneron|vertex|otsuka|chugai|servier|"
+              r"sun pharma|cipla|dr\.? reddy|lupin|zydus|biocon|glenmark|beigene|hengrui|sino biopharm",
+    "medtech": r"ge healthcare|ge medical|gehc|siemens|philips|dentsply|carl zeiss|zeiss|heidelberg engineering|topcon|nikon|"
+               r"canon medical|fujifilm|united imaging|samsung medison|"
+               r"mindray|medtronic|abbott|boston scientific|stryker|zimmer|olympus|hologic|carestream|"
+               r"agfa|konica minolta|shimadzu|esaote|neusoft|wipro ge|becton|baxter|edwards|intuitive|"
+               r"varian|elekta|bracco|guerbet|hitachi|toshiba|nihon kohden|terumo|dr[aä]ger|resmed|"
+               r"allengers|skanray|trivitron",
+    "cro": r"iqvia|icon plc|parexel|\bppd\b|syneos|labcorp|covance|medpace|fortrea|wuxi|pharmaron|syngene|"
+           r"clario|bioclinica|imaging endpoints|perceptive|calyx|novotech|tigermed|veristat|worldwide clinical",
+    "bigtech": r"google|alphabet|deepmind|microsoft|amazon|\baws\b|meta platforms|apple inc|nvidia|\bibm\b|"
+               r"oracle|tencent|alibaba|baidu|huawei|samsung electronics|intel corp",
+}
+LARGE_RX = {k: re.compile(rf"\b({v})", re.I) for k, v in LARGE.items()}
+KNOWN_LARGE = re.compile("|".join(f"({v})" for v in LARGE.values()), re.I)
+
+BUYER_LABEL = {"startup": "Startup / SME", "pharma": "Pharma", "medtech": "Large medtech",
+               "cro": "CRO / imaging core lab", "bigtech": "Big tech", "academic": "Academic",
+               "hospital": "Hospital", "government": "Government"}
+
+
+def buyer_type(name: str, org_kind: str) -> str:
+    """Who is this as a buyer? org_kind is org_type()'s answer."""
+    if org_kind != "industry":
+        return org_kind
+    for kind, rx in LARGE_RX.items():
+        if rx.search(name or ""):
+            return kind
+    return "startup"
+
+
 def org_type(name: str, sponsor_class: str = "") -> str:
     sc = (sponsor_class or "").upper()
     # Registries sometimes class a university sponsor as INDUSTRY; a name that
     # is plainly academic or clinical wins over the class.
     if sc == "INDUSTRY" and ACADEMIC_NAME.search(name or "") and not KNOWN_INDUSTRY.search(name or ""):
         sc = ""
-    if sc == "INDUSTRY" or KNOWN_INDUSTRY.search(name or "") or re.search(
-            r"\b(inc|ltd|llc|gmbh|plc|pharma\w*|therapeutics|biotech\w*|"
-            r"biosciences?)\b", name or "", re.I):
+    if sc == "INDUSTRY" or is_company(name):
         return "industry"
     if sc in ("NIH", "FED", "OTHER_GOV") or re.search(
             r"\b(national institute|ministry|council|government)\b", name or "", re.I):

@@ -25,7 +25,12 @@ SOURCES (all free, no keys)
     CTIS                 active development (EU)  sponsor, phase, EU footprint
     ISRCTN               active development (UK)  sponsor, phase, site countries
     CORDIS               funded programme (EU)    coordinator, EU contribution
-    UKRI GtR             funded programme (UK)    lead organisation, award
+    UKRI GtR             funded programme (UK)    lead organisation, award; Innovate UK = company
+  Commercial buyers (sources_commercial.py) -- companies pay; they rarely write gaps:
+    FDA AI devices+510k  cleared AI product       company, country (global applicants), contact
+    NIH SBIR/STTR        US startup R&D grant     company, PI, award
+    BIRAC                India startup grant      company, project, city
+    Europe PMC           company-authored paper   company, country (any, incl. CN/KR/JP/IN)
 
 HONESTY RULES
     * Every dimension is checked for whether it actually discriminates across
@@ -52,11 +57,12 @@ from pathlib import Path
 from typing import Callable
 
 from . import orgs
+from . import sources_commercial as commercial
 from . import sources_eu_uk as eu_uk
 from .query import DATA_TYPES, SUPPLY, SearchQuery, core_term, supply_label, supply_pitch
 from .http import get
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 REPORTER = "https://api.reporter.nih.gov/v2/projects/search"
 CTGOV = "https://clinicaltrials.gov/api/v2/studies"
@@ -115,7 +121,14 @@ NEEDS: dict[str, tuple[str, float, list[str]]] = {
     "geographic_gap": ("sites or evidence in {supply}, where they have none", 0.25, []),
     "asia_absent": ("any Asian representation in their programme", 0.20, []),
     "funded_programme": ("active funded work in this area", 0.15, []),
+    # Commercial demand, derived from what companies do rather than what they write.
+    "ai_product_imaging": ("training and validation data for a cleared imaging-AI product "
+                           "(new indications, sites and markets)", 0.55, []),
+    "ai_product": ("data for a cleared AI product", 0.40, []),
+    "company_grant": ("data for funded product development", 0.45, []),
+    "company_rnd": ("data for in-house product research", 0.35, []),
 }
+COMMERCIAL_NEEDS = {"ai_product_imaging", "ai_product", "company_grant", "company_rnd"}
 # Data types a paper says it lacks ("imaging data were not available").
 for _code, (_label, _q, _desc, _pats) in DATA_TYPES.items():
     NEEDS[f"data_{_code}"] = (_desc, 0.45, _pats)
@@ -504,6 +517,10 @@ class Lead:
     rationale: list[str] = field(default_factory=list)
     named_people: list[dict] = field(default_factory=list)
     opening_angle: str = ""
+    # Who this is as a buyer (orgs.BUYER_LABEL), and how strongly it is buying.
+    buyer_type: str = "academic"
+    buyer_intent: str = ""                  # "Active buyer" | "Likely buyer" | ""
+    commercial_evidence: list[str] = field(default_factory=list)
 
     @property
     def sources(self) -> list[str]:
@@ -538,6 +555,8 @@ def score_dimensions(lead: Lead) -> dict[str, float]:
     grants = [s.extra.get("award_usd", s.extra.get("award", 0)) or 0
               for s in sig if s.source == "grants"]
     budget = min(1.0, math.log10(1 + sum(grants)) / math.log10(1 + 5_000_000)) if grants else 0.0
+    if any(s.source == "devices" for s in sig):
+        budget = max(budget, 0.8)
     for s in sig:
         if s.source == "trials":
             ph = max((PHASE_WEIGHT.get(p, 0.3) for p in s.extra.get("phases") or []),
@@ -584,8 +603,27 @@ def diagnose(leads: list[Lead]) -> dict[str, dict]:
     return diag
 
 
+def buyer_intent(lead: Lead) -> None:
+    """Active buyer: two or more separate commercial signals (clearances,
+    company grants, company papers), at least one in the last two years.
+    Likely buyer: one. A company whose only signal is a drug trial is neither."""
+    ev = [s for s in lead.signals if COMMERCIAL_NEEDS & set(s.needs)]
+    recent = any((_years_ago(s.date) or 99) <= 2 for s in ev) or any(not s.date for s in ev)
+    lead.buyer_intent = ("Active buyer" if len(ev) >= 2 and recent else "Likely buyer" if ev else "")
+    kinds = {"devices": "cleared AI product", "grants": "company R&D grant", "publications": "company research"}
+    lead.commercial_evidence = [f"{kinds.get(s.source, s.source)}: {s.title[:90]}" for s in ev[:5]]
+
+
 def opening_angle(lead: Lead, q: SearchQuery) -> str:
     pitch = supply_pitch(q.supply)
+    dev = next((s for s in lead.signals if s.source == "devices"), None)
+    if dev:
+        return (f"Reference their cleared product {dev.title[:80]} and offer {pitch} for "
+                f"new indications, external validation and new markets.")
+    grant = next((s for s in lead.signals if "company_grant" in s.needs), None)
+    if grant:
+        return (f"Reference their funded product development \"{grant.title[:80]}\" and offer "
+                f"{pitch} for training and validation.")
     pub = next((s for s in lead.signals if s.source == "publications"), None)
     if pub:
         # Data-type needs first: they are the most specific thing we can offer.
@@ -630,6 +668,12 @@ def build_leads(signals: list[Signal], q: SearchQuery | None = None) -> list[Lea
             not abbrev.search(kv[0]), not school.search(kv[0]), kv[1], len(kv[0])))[0]
         sc = next((s.sponsor_class for s in lead.signals if s.sponsor_class), "")
         lead.org_type = orgs.org_type(lead.org_display, sc)
+        lead.buyer_type = orgs.buyer_type(lead.org_display, lead.org_type)
+        if any(s.extra.get("startup") for s in lead.signals) and lead.buyer_type == "academic":
+            lead.buyer_type = "startup"         # SBIR/BIRAC recipients are companies by eligibility
+        if lead.buyer_type not in ("academic", "hospital", "government"):
+            lead.org_type = "industry"
+            buyer_intent(lead)
         # A company's trial footprint says nothing about where it is based, so
         # trial-derived countries count only for non-industry sponsors.
         countries = [s.country for s in lead.signals if s.country and not (
@@ -671,6 +715,8 @@ def finalise(leads: list[Lead], q: SearchQuery | None = None) -> dict[str, dict]
                 lead.rationale.append(f"stated need: {need_text(code, q)}")
         if "geographic_gap" in lead.needs:
             lead.rationale.append(f"active programme needing {need_text('geographic_gap', q)}")
+        if lead.buyer_intent:
+            lead.rationale.insert(0, f"{lead.buyer_intent.lower()}: " + "; ".join(lead.commercial_evidence[:2]))
         lead.opening_angle = opening_angle(lead, q)
     leads.sort(key=lambda l: l.score, reverse=True)
     return diag
@@ -678,7 +724,7 @@ def finalise(leads: list[Lead], q: SearchQuery | None = None) -> dict[str, dict]
 
 # --------------------------------------------------------------------- run
 
-REGIONS = ("us", "eu", "uk")
+REGIONS = ("us", "eu", "uk", "in")   # "in": India and Asia
 
 
 def run(query: "SearchQuery | str | dict", years: int = 3, max_pubs: int = 200,
@@ -707,9 +753,18 @@ def collect(q: SearchQuery, years: int = 3, max_pubs: int = 200, max_grants: int
     were found for, so a multi-disease dataset match can say which it was."""
     log = log or (lambda m: None)
     # Europe PMC and ClinicalTrials.gov are global; NIH funding is US-only.
-    signals = (harvest_publications(q, years, max_pubs, log)
-               + (harvest_grants(q, max_grants, log) if "us" in regions else [])
-               + harvest_trials(q, max_trials, log))
+    # Commercial buyers first, so a record found twice (an SBIR grant is also
+    # an NIH grant) keeps its commercial reading when merged by URL.
+    signals = commercial.harvest_fda_devices(q, max_trials, log, Signal)       # global applicants
+    signals += commercial.harvest_company_papers(q, years, max_pubs, log, Signal,
+                                                 commercial.gazetteer())      # global
+    if "us" in regions:
+        signals += commercial.harvest_sbir(q, max_grants, log, Signal)
+    if "in" in regions:
+        signals += commercial.harvest_birac(q, max_grants, log, Signal)
+    signals += (harvest_publications(q, years, max_pubs, log)
+                + (harvest_grants(q, max_grants, log) if "us" in regions else [])
+                + harvest_trials(q, max_trials, log))
     # Europe and the UK. ClinicalTrials.gov goes first so it is canonical
     # when one trial is registered in several places.
     if "eu" in regions:
@@ -759,7 +814,11 @@ def assemble(signals: list[Signal], q: SearchQuery, log: Progress | None = None,
         "summary": {"signals": len(signals), "organisations": len(leads),
                     "by_source": dict(by_src), "by_registry": dict(by_registry),
                     "regions": list(regions),
-                    "tiers": {t: sum(1 for l in leads if l.tier == t) for t in "ABC"}},
+                    "tiers": {t: sum(1 for l in leads if l.tier == t) for t in "ABC"},
+                    "buyers": {b: sum(1 for l in leads if l.buyer_type == b) for b in orgs.BUYER_LABEL
+                               if any(l.buyer_type == b for l in leads)},
+                    "commercial": {i: sum(1 for l in leads if l.buyer_intent == i)
+                                   for i in ("Active buyer", "Likely buyer")}},
         "diagnostics": diag,
         "leads": [{**{k: v for k, v in asdict(l).items() if k != "signals"},
                    "sources": l.sources,
