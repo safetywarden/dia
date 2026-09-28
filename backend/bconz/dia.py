@@ -161,6 +161,11 @@ GAP_CUE = re.compile(
 # scans ... to overcome the limitations of ..."), so their gap cue must sit
 # within a few words of the data-type phrase, not merely in the same sentence.
 CUE_WINDOW_WORDS = 8
+# "Underrepresented minorities in radiology" is about who becomes a radiologist,
+# not about patients missing from data.
+WORKFORCE = re.compile(
+    r"\b(workforce|radiologists|clinicians|physicians|faculty|trainees?|residents|residency|"
+    r"medical students?|students|leadership|recruitment into|careers?|curricul\w*|mentorship)\b")
 
 
 def _cued_near(low: str, m: re.Match) -> bool:
@@ -188,6 +193,8 @@ def detect_needs(text: str) -> dict[str, str]:
             if code in out or not pats:
                 continue
             if code in NEEDS_CUE and not cued:
+                continue
+            if code == "diverse_population" and WORKFORCE.search(low):
                 continue
             hits = [m for pat in pats for m in re.finditer(pat, low)]
             if code.startswith("data_"):

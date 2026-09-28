@@ -144,3 +144,11 @@ def test_data_type_cue_must_be_near_the_data_phrase():
 def test_glued_abstract_headings_split_sentences():
     t = "Concerns about generalizability remain a barrier.MethodsWe reviewed 40 CT scans."
     assert dia.sentences(t) == ["Concerns about generalizability remain a barrier.", "We reviewed 40 CT scans."]
+
+
+def test_workforce_diversity_is_not_a_data_need():
+    assert "diverse_population" not in dia.detect_needs(
+        "Despite growing interest, the inclusion of women and underrepresented minorities in radiology "
+        "residency remains limited.")
+    assert "diverse_population" in dia.detect_needs(
+        "Patients from underrepresented populations are often excluded from imaging datasets.")
