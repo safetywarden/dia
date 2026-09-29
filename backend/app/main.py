@@ -321,7 +321,11 @@ def draft_outreach(run_id: int, body: DraftIn, who: str = Depends(user)):
         warning = _check_address(s, body.email, body.found_at, body.person_name)
         params = run.params or {}
         supply = (params.get("query") or {}).get("supply") or None
-        d = outreach.draft(lead.data, params.get("dataset"), supply, body.person_name, body.found_at)
+        # The dataset as it is now: approved outreach text may have been added
+        # after the search ran.
+        current = s.get(db.Dataset, params["dataset_id"]) if params.get("dataset_id") else None
+        profile = current.profile if current else params.get("dataset")
+        d = outreach.draft(lead.data, profile, supply, body.person_name, body.found_at)
         o = db.Outreach(run_id=run_id, org_key=lead.org_key, org_display=lead.org_display,
                         person_name=body.person_name.strip(), email=body.email.strip(),
                         found_at=body.found_at.strip(), subject=d["subject"], body=d["body"],
