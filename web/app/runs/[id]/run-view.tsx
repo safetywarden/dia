@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { DraftPanel } from "../../outreach-panel";
 import { api, BUYER_LABEL, COMMERCIAL, REGISTRY_LABEL, RELATION_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
 
@@ -206,8 +206,13 @@ function LeadCard({ runId, lead: l, contacts, onContacts }: { runId: number; lea
             {contacts > 0 && <> · <button className="link" onClick={onContacts}>{contacts} contactable</button></>}
           </div>
         </div>
-        <div className="score">{l.score.toFixed(0)}<small>of 100</small></div>
+        <div className="lead-actions">
+          <div className="score">{l.score.toFixed(0)}<small>of 100</small></div>
+          <button className={`btn small${COMMERCIAL.has(l.buyer_type ?? "") ? " primary" : ""}`}
+                  onClick={() => setDrafting(!drafting)}>{drafting ? "Close draft" : "Draft outreach"}</button>
+        </div>
       </div>
+      {drafting && <DraftPanel runId={runId} orgKey={l.org_key} orgName={l.org_display} onClose={() => setDrafting(false)} />}
 
       <div className="dims">
         {Object.entries(l.dimensions).map(([d, v]) => v.informative ? (
@@ -244,9 +249,7 @@ function LeadCard({ runId, lead: l, contacts, onContacts }: { runId: number; lea
         )}
       </details>
       {l.fit && <FitBlock fit={l.fit} />}
-      <div className="angle"><strong>Opening angle.</strong> {l.opening_angle}
-        {!drafting && <> <button className="btn small" onClick={() => setDrafting(true)}>Draft outreach</button></>}</div>
-      {drafting && <DraftPanel runId={runId} orgKey={l.org_key} orgName={l.org_display} onClose={() => setDrafting(false)} />}
+      <div className="angle"><strong>Opening angle.</strong> {l.opening_angle}</div>
     </article>
   );
 }
@@ -291,7 +294,16 @@ function DatasetCard({ p }: { p: NonNullable<NonNullable<Run["params"]>["dataset
 function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contact[]; reload: () => void }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  const [draftFor, setDraftFor] = useState<number | null>(null);
+  const [draftFor, setDraftFor] = useState<string | null>(null);
+  const toggleDraft = (k: string) => setDraftFor(draftFor === k ? null : k);
+  const panelFor = (c: Contact, k: string, cols: number) => draftFor === k && (
+    <tr className="draft-row"><td colSpan={cols}>
+      <DraftPanel key={k} runId={runId} orgKey={c.org_key} orgName={c.org_display}
+        person={/^(corresponding author|company contact|study contact)/i.test(c.person_name) ? "" : c.person_name}
+        email={c.value && c.channel === "email" ? c.value : ""}
+        foundAt={c.value && c.channel === "email" ? `${c.provenance.publisher}: ${c.provenance.source_url}` : ""}
+        onClose={() => setDraftFor(null)} />
+    </td></tr>);
   const ok = contacts.filter((c) => c.exportable);
   const blocked = contacts.filter((c) => !c.exportable);
 
@@ -337,7 +349,8 @@ function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contac
           <thead><tr><th>Person</th><th>Contact</th><th>Where it was published</th><th>Basis</th><th /></tr></thead>
           <tbody>
             {ok.map((c, i) => (
-              <tr key={i}>
+              <Fragment key={i}>
+              <tr>
                 <td><strong>{c.person_name}</strong><div className="muted small">{c.person_role} · {c.org_display}</div>
                   {c.relation && <div className={`small rel-${c.relation}`}>{RELATION_LABEL[c.relation]}</div>}
                   {c.about && <div className="muted small">Re: {c.about}</div>}</td>
@@ -352,36 +365,39 @@ function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contac
                     {c.provenance.jurisdiction_source && `, from ${c.provenance.jurisdiction_source}`}{c.provenance.country && ")"}</div>
                 </td>
                 <td className="small" style={{ whiteSpace: "nowrap" }}>
-                  <button className="link" onClick={() => setDraftFor(draftFor === i ? null : i)}>Draft email</button>{" · "}
+                  <button className="btn small primary" onClick={() => toggleDraft(`ok${i}`)}>
+                    {draftFor === `ok${i}` ? "Close" : "Draft email"}</button>{" "}
                   <button className="link" onClick={() => suppress(c)}>Do not contact</button></td>
               </tr>
+              {panelFor(c, `ok${i}`, 5)}
+              </Fragment>
             ))}
           </tbody>
         </table>
         {ok.length === 0 && <p className="muted">No published contacts were found for these leads.</p>}
       </div>
-      {draftFor !== null && ok[draftFor] && (
-        <DraftPanel key={draftFor} runId={runId} orgKey={ok[draftFor].org_key} orgName={ok[draftFor].org_display}
-          person={/^(corresponding author|company contact)/i.test(ok[draftFor].person_name) ? "" : ok[draftFor].person_name}
-          email={ok[draftFor].value ?? ""} foundAt={`${ok[draftFor].provenance.publisher}: ${ok[draftFor].provenance.source_url}`}
-          onClose={() => setDraftFor(null)} />
-      )}
 
       {blocked.length > 0 && (
         <>
           <h2>Named, but no published contact</h2>
-          <p className="muted small">Publicly identified, but they did not publish an address. Approach through the
-            institution&apos;s own published research-office channel. Do not guess an address.</p>
+          <p className="muted small">Publicly identified, but no address was published where DIA looked. If you find
+            one the person or company published (their website, a paper), use <strong>Draft email</strong> and say where
+            you found it. Don&apos;t guess an address.</p>
           <div className="card table-wrap">
             <table>
-              <thead><tr><th>Person</th><th>Organisation</th><th>Why not contactable</th></tr></thead>
+              <thead><tr><th>Person</th><th>Organisation</th><th>Why not contactable</th><th /></tr></thead>
               <tbody>
                 {blocked.slice(0, 100).map((c, i) => (
-                  <tr key={i}>
+                  <Fragment key={i}>
+                  <tr>
                     <td>{c.person_name}<div className="muted small">{c.person_role}</div></td>
                     <td className="small">{c.org_display}</td>
                     <td className="small muted">{c.gate_reason} · <a href={c.provenance.source_url} target="_blank" rel="noopener noreferrer">source</a></td>
+                    <td><button className="btn small" onClick={() => toggleDraft(`nb${i}`)}>
+                      {draftFor === `nb${i}` ? "Close" : "Draft email"}</button></td>
                   </tr>
+                  {panelFor(c, `nb${i}`, 4)}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

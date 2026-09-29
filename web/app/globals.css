@@ -158,6 +158,8 @@ details summary { cursor: pointer; font-size: 13px; color: var(--accent); margin
 .fit ul { list-style: none; margin: 6px 0 0; padding: 0; font-size: 13px; display: grid; gap: 3px; }
 .fit .met { color: var(--fg); } .fit .met strong { color: var(--ok); font-weight: 600; }
 .fit .unmet { color: var(--no); } .fit .unknown { color: var(--muted); }
+.lead-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.draft-row > td { background: var(--soft); }
 .draft { margin-top: 12px; display: grid; gap: 10px; border-color: var(--accent); }
 .draft-edit { display: grid; gap: 8px; }
 .draft textarea, .draft-edit textarea { width: 100%; font: inherit; font-size: 13px; line-height: 1.5; }

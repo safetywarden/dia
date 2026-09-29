@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, linkedinSearch, mailtoLink, sendCommand, type Outreach } from "@/lib/types";
 
 /** Draft a first message to one lead. The user supplies the address they
@@ -14,6 +14,9 @@ export function DraftPanel({ runId, orgKey, orgName, person = "", email = "", fo
   const [draft, setDraft] = useState<Outreach | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  // Open where the user is looking, not somewhere down a long page.
+  useEffect(() => { box.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [draft]);
 
   async function write(e: React.FormEvent) {
     e.preventDefault(); setError(""); setBusy(true);
@@ -25,7 +28,7 @@ export function DraftPanel({ runId, orgKey, orgName, person = "", email = "", fo
   }
 
   return (
-    <div className="card draft">
+    <div className="card draft" ref={box}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <strong>Outreach to {orgName}</strong>
         <button className="link small" onClick={onClose}>Close</button>
