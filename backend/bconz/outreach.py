@@ -26,7 +26,7 @@ SENDER = {"name": "Shaw", "org": "BCONZ", "email": "shaw@bconz.com", "web": "www
 POSTAL = ("Bconz International (OPC) Pvt Ltd, Manipal County Road, Bangalore 560068, India · "
           "60 Paya Lebar Road #06-53, Paya Lebar Square, Singapore 409051")
 LINKEDIN_LIMIT = 300          # a LinkedIn connection note
-OFFER_WORD = {"ultrasound": "ultrasound and echo", "ecg": "ECG", "ehr": "EHR", "pro": "patient-reported outcome"}
+OFFER_WORD = {"ultrasound": "ultrasound/echo", "ecg": "ECG", "ehr": "EHR", "pro": "patient-reported outcome"}
 
 
 def _month(iso: str) -> str:
