@@ -160,3 +160,30 @@ def test_suppression_reaches_stored_records(client):
     assert "ok@mayo.edu" not in r.text and r.headers["X-Exported-Rows"] == "0"
     shown = {c["value"]: c for c in client.get(f"/runs/{rid}/contacts").json()}
     assert shown["ok@mayo.edu"]["exportable"] is False
+
+
+def test_outreach_draft_queue_and_outbox(client):
+    rid = _run(client)
+    bad = client.post(f"/runs/{rid}/outreach", json={"org_key": "mayo clinic", "email": "x@mayo.edu"})
+    assert bad.status_code == 422                                  # must say where it was found
+    d = client.post(f"/runs/{rid}/outreach", json={"org_key": "mayo clinic", "person_name": "Ann Lee",
+                                                    "email": "ann.lee@mayo.edu",
+                                                    "found_at": "mayo.edu research contacts page"}).json()
+    assert d["status"] == "draft" and d["body"].startswith("Dear Ann Lee,")
+    assert "I found your address on mayo.edu research contacts page." in d["body"]
+    assert "reply \"no\"" in d["body"] and "Bangalore" in d["body"] and len(d["linkedin"]) <= 300
+    assert client.get("/outreach/outbox.json").json() == []        # drafts are not sent
+    q = client.put(f"/outreach/{d['id']}", json={"status": "queued", "subject": "Edited"}).json()
+    box = client.get("/outreach/outbox.json").json()
+    assert q["status"] == "queued" and box[0]["to"] == "ann.lee@mayo.edu" and box[0]["subject"] == "Edited"
+    client.post("/suppression", json={"value": "ann.lee@mayo.edu"})
+    assert client.get("/outreach/outbox.json").json() == []        # a later "no" still wins
+    assert client.post(f"/runs/{rid}/outreach", json={
+        "org_key": "mayo clinic", "email": "ann.lee@mayo.edu", "found_at": "x"}).status_code == 409
+
+
+def test_outreach_without_email_is_a_draft_for_linkedin(client):
+    rid = _run(client)
+    d = client.post(f"/runs/{rid}/outreach", json={"org_key": "mayo clinic"}).json()
+    assert d["body"].startswith("Dear Mayo Clinic team,") and "forward" in d["body"]
+    assert client.put(f"/outreach/{d['id']}", json={"status": "queued"}).status_code == 422

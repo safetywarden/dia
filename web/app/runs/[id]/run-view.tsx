@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DraftPanel } from "../../outreach-panel";
 import { api, BUYER_LABEL, COMMERCIAL, REGISTRY_LABEL, RELATION_LABEL, SOURCE_LABEL, type Contact, type Lead, type Run } from "@/lib/types";
 
 type Tab = "leads" | "contacts" | "method";
@@ -111,7 +112,7 @@ export default function RunView({ id }: { id: number }) {
             ))}
           </div>
           {run.params?.dataset && tab === "leads" && <DatasetCard p={run.params.dataset} />}
-          {tab === "leads" && <Leads isMatch={!!run.params?.dataset} leads={leads} contactsByOrg={byOrg} onContacts={() => setTab("contacts")} />}
+          {tab === "leads" && <Leads runId={id} isMatch={!!run.params?.dataset} leads={leads} contactsByOrg={byOrg} onContacts={() => setTab("contacts")} />}
           {tab === "contacts" && <Contacts runId={id} contacts={contacts} reload={load} />}
           {tab === "method" && <Method run={run} />}
         </>
@@ -124,8 +125,8 @@ function Tile({ n, l }: { n?: number; l: string }) {
   return <div className="tile"><div className="n">{n ?? "—"}</div><div className="l">{l}</div></div>;
 }
 
-function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
-  { leads: Lead[]; contactsByOrg: Record<string, number>; onContacts: () => void; isMatch?: boolean }) {
+function Leads({ runId, leads, contactsByOrg, onContacts, isMatch = false }:
+  { runId: number; leads: Lead[]; contactsByOrg: Record<string, number>; onContacts: () => void; isMatch?: boolean }) {
   // A buyer match is ranked by fit, so show every tier but only real fits by default.
   const [tiers, setTiers] = useState<Set<string>>(new Set(isMatch ? ["A", "B", "C"] : ["A", "B"]));
   const [fitOnly, setFitOnly] = useState(isMatch);
@@ -177,13 +178,14 @@ function Leads({ leads, contactsByOrg, onContacts, isMatch = false }:
         <input placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 200 }} />
         <span className="muted small">{shown.length} shown</span>
       </div>
-      {shown.map((l) => <LeadCard key={l.org_key} lead={l} contacts={contactsByOrg[l.org_key] ?? 0} onContacts={onContacts} />)}
+      {shown.map((l) => <LeadCard key={l.org_key} runId={runId} lead={l} contacts={contactsByOrg[l.org_key] ?? 0} onContacts={onContacts} />)}
       {shown.length === 0 && <p className="muted">No leads match these filters.</p>}
     </>
   );
 }
 
-function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: number; onContacts: () => void }) {
+function LeadCard({ runId, lead: l, contacts, onContacts }: { runId: number; lead: Lead; contacts: number; onContacts: () => void }) {
+  const [drafting, setDrafting] = useState(false);
   // One quote per sentence, listing every need it evidences.
   const stated = Object.entries(l.evidence).filter(([k]) => k in NEED_LABEL)
     .reduce<[string, string][]>((acc, [k, text]) => {
@@ -242,7 +244,9 @@ function LeadCard({ lead: l, contacts, onContacts }: { lead: Lead; contacts: num
         )}
       </details>
       {l.fit && <FitBlock fit={l.fit} />}
-      <div className="angle"><strong>Opening angle.</strong> {l.opening_angle}</div>
+      <div className="angle"><strong>Opening angle.</strong> {l.opening_angle}
+        {!drafting && <> <button className="btn small" onClick={() => setDrafting(true)}>Draft outreach</button></>}</div>
+      {drafting && <DraftPanel runId={runId} orgKey={l.org_key} orgName={l.org_display} onClose={() => setDrafting(false)} />}
     </article>
   );
 }
@@ -287,6 +291,7 @@ function DatasetCard({ p }: { p: NonNullable<NonNullable<Run["params"]>["dataset
 function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contact[]; reload: () => void }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [draftFor, setDraftFor] = useState<number | null>(null);
   const ok = contacts.filter((c) => c.exportable);
   const blocked = contacts.filter((c) => !c.exportable);
 
@@ -346,13 +351,21 @@ function Contacts({ runId, contacts, reload }: { runId: number; contacts: Contac
                   <div className="muted">{c.provenance.jurisdiction}{c.provenance.country && ` (${c.provenance.country}`}
                     {c.provenance.jurisdiction_source && `, from ${c.provenance.jurisdiction_source}`}{c.provenance.country && ")"}</div>
                 </td>
-                <td><button className="link small" onClick={() => suppress(c)}>Do not contact</button></td>
+                <td className="small" style={{ whiteSpace: "nowrap" }}>
+                  <button className="link" onClick={() => setDraftFor(draftFor === i ? null : i)}>Draft email</button>{" · "}
+                  <button className="link" onClick={() => suppress(c)}>Do not contact</button></td>
               </tr>
             ))}
           </tbody>
         </table>
         {ok.length === 0 && <p className="muted">No published contacts were found for these leads.</p>}
       </div>
+      {draftFor !== null && ok[draftFor] && (
+        <DraftPanel key={draftFor} runId={runId} orgKey={ok[draftFor].org_key} orgName={ok[draftFor].org_display}
+          person={/^(corresponding author|company contact)/i.test(ok[draftFor].person_name) ? "" : ok[draftFor].person_name}
+          email={ok[draftFor].value ?? ""} foundAt={`${ok[draftFor].provenance.publisher}: ${ok[draftFor].provenance.source_url}`}
+          onClose={() => setDraftFor(null)} />
+      )}
 
       {blocked.length > 0 && (
         <>

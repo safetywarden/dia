@@ -6,7 +6,7 @@ import { api, DATA_TYPES, MARKETS, ORIGINS, type Dataset, type DatasetProfile, t
 const EMPTY: DatasetProfile = {
   name: "", partner: "", origin: [], diseases: [], data_types: [], patients: null, disease_patients: {},
   sites: null, followup_median_years: null, diverse: null, prospective: null, population: "",
-  coding: [], years: "", source: "manual", notes: "", search_focus: [],
+  coding: [], years: "", source: "manual", notes: "", search_focus: [], outreach_blurb: "",
 };
 
 const num = (v: string) => (v.trim() === "" ? null : Number(v));
@@ -172,6 +172,11 @@ function ProfileForm({ initial, id, onDone, onCancel }:
         Only find demand that mentions these data types
         <span className="muted small">(e.g. an imaging archive: find imaging research, not drug trials)</span>
       </label>
+      <label>What outreach may say about this dataset
+        <textarea rows={3} value={p.outreach_blurb ?? ""} onChange={(e) => set("outreach_blurb", e.target.value)}
+          placeholder="e.g. BCONZ is preparing access to a diagnostic imaging archive from India: 29M+ X-ray, CT and MRI studies, about 98% with radiologist reports." />
+        <span className="muted small">Rounded figures only, and no partner name unless the partner agreed. Left blank,
+          drafts describe the dataset by origin and data type only.</span></label>
       <p className="muted small" style={{ margin: 0 }}>Leave anything you don&apos;t know blank — it is shown as
         &quot;not known&quot; against each buyer&apos;s needs and never counted as a match.</p>
       {error && <p className="error">{error}</p>}

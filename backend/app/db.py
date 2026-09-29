@@ -136,6 +136,31 @@ class Dataset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Outreach(Base):
+    """A first-touch message to a lead: drafted here, sent by a person.
+
+    An address the user found (a company website, a paper) is recorded with
+    where it was found, so every message sent can say so.
+    """
+    __tablename__ = "outreach"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    org_key: Mapped[str] = mapped_column(String(300), index=True)
+    org_display: Mapped[str] = mapped_column(String(300))
+    person_name: Mapped[str] = mapped_column(String(300), default="")
+    email: Mapped[str] = mapped_column(String(300), default="", index=True)
+    found_at: Mapped[str] = mapped_column(Text, default="")
+    subject: Mapped[str] = mapped_column(String(300), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    linkedin: Mapped[str] = mapped_column(Text, default="")
+    angle: Mapped[str] = mapped_column(String(30), default="")
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)  # draft|queued|sent|skipped
+    created_by: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 def init() -> None:
     Base.metadata.create_all(engine)
     _add_missing_columns()

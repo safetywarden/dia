@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 
-from bconz import dia, pcia
+from bconz import dia, outreach, pcia
 from bconz.fit import DatasetProfile, from_harm
 from bconz.query import DATA_TYPES, SUPPLY, SearchQuery
 
@@ -264,6 +264,125 @@ def remove_suppression(sid: int, _: str = Depends(user)):
         s.commit()
 
 
+# ----------------------------------------------------------------- outreach
+
+class DraftIn(BaseModel):
+    org_key: str = Field(min_length=1, max_length=300)
+    person_name: str = Field("", max_length=300)
+    email: str = Field("", max_length=300)
+    found_at: str = Field("", max_length=1000)      # where the address was published
+
+
+class OutreachEdit(BaseModel):
+    person_name: str | None = Field(None, max_length=300)
+    email: str | None = Field(None, max_length=300)
+    found_at: str | None = Field(None, max_length=1000)
+    subject: str | None = Field(None, max_length=300)
+    body: str | None = Field(None, max_length=20000)
+    linkedin: str | None = Field(None, max_length=2000)
+    status: Literal["draft", "queued", "sent", "skipped"] | None = None
+
+
+def outreach_out(o: db.Outreach, warning: str = "") -> dict:
+    return {"id": o.id, "run_id": o.run_id, "org_key": o.org_key, "org_display": o.org_display,
+            "person_name": o.person_name, "email": o.email, "found_at": o.found_at,
+            "subject": o.subject, "body": o.body, "linkedin": o.linkedin, "angle": o.angle,
+            "status": o.status, "created_by": o.created_by, "created_at": o.created_at,
+            "updated_at": o.updated_at, "sent_at": o.sent_at, "warning": warning}
+
+
+def _check_address(s, email: str, found_at: str, person: str) -> str:
+    """Refuse suppressed or malformed addresses; warn on an earlier message."""
+    email = email.strip()
+    if not email:
+        return ""
+    if not outreach.EMAIL_OK.match(email):
+        raise HTTPException(422, "that doesn't look like an email address")
+    if not found_at.strip():
+        raise HTTPException(422, "say where you found this address (a URL or the page/paper); "
+                                 "the email tells the recipient")
+    supp = worker.suppression_set()
+    if email.lower() in supp or (person and person.lower() in supp):
+        raise HTTPException(409, f"{email} is on the do-not-contact list")
+    earlier = s.scalar(select(db.Outreach).where(func.lower(db.Outreach.email) == email.lower(),
+                                                 db.Outreach.status == "sent"))
+    return (f"Already sent to {email} on {earlier.sent_at:%d %b %Y}: one follow-up at most."
+            if earlier and earlier.sent_at else "")
+
+
+@app.post("/runs/{run_id}/outreach", status_code=201)
+def draft_outreach(run_id: int, body: DraftIn, who: str = Depends(user)):
+    """Write a first-touch draft for one lead of a run. Nothing is sent."""
+    with db.Session() as s:
+        run = _run(s, run_id)
+        lead = s.scalar(select(db.Lead).where(db.Lead.run_id == run_id, db.Lead.org_key == body.org_key))
+        if lead is None:
+            raise HTTPException(404, "lead not found in this run")
+        warning = _check_address(s, body.email, body.found_at, body.person_name)
+        params = run.params or {}
+        supply = (params.get("query") or {}).get("supply") or None
+        d = outreach.draft(lead.data, params.get("dataset"), supply, body.person_name, body.found_at)
+        o = db.Outreach(run_id=run_id, org_key=lead.org_key, org_display=lead.org_display,
+                        person_name=body.person_name.strip(), email=body.email.strip(),
+                        found_at=body.found_at.strip(), subject=d["subject"], body=d["body"],
+                        linkedin=d["linkedin"], angle=d["angle"], created_by=who)
+        s.add(o)
+        s.commit()
+        return outreach_out(o, warning)
+
+
+@app.get("/outreach")
+def list_outreach(status: str | None = None, run_id: int | None = None, _: str = Depends(user)):
+    with db.Session() as s:
+        q = select(db.Outreach).order_by(db.Outreach.updated_at.desc())
+        if status:
+            q = q.where(db.Outreach.status.in_(status.split(",")))
+        if run_id:
+            q = q.where(db.Outreach.run_id == run_id)
+        return [outreach_out(o) for o in s.scalars(q)]
+
+
+@app.put("/outreach/{oid}")
+def edit_outreach(oid: int, body: OutreachEdit, _: str = Depends(user)):
+    with db.Session() as s:
+        o = s.get(db.Outreach, oid)
+        if o is None:
+            raise HTTPException(404, "not found")
+        changes = body.model_dump(exclude_none=True) if hasattr(body, "model_dump") else body.dict(exclude_none=True)
+        new_email = changes.get("email", o.email)
+        new_found = changes.get("found_at", o.found_at)
+        warning = ""
+        if "email" in changes or changes.get("status") in ("queued", "sent"):
+            warning = _check_address(s, new_email, new_found, changes.get("person_name", o.person_name))
+        if changes.get("status") in ("queued", "sent") and not new_email:
+            raise HTTPException(422, "add the recipient's email first")
+        for k, v in changes.items():
+            setattr(o, k, v.strip() if isinstance(v, str) and k in ("email", "found_at", "person_name") else v)
+        if changes.get("status") == "sent" and not o.sent_at:
+            o.sent_at = db.now()
+        o.updated_at = db.now()
+        s.commit()
+        return outreach_out(o, warning)
+
+
+@app.delete("/outreach/{oid}", status_code=204)
+def delete_outreach(oid: int, _: str = Depends(user)):
+    with db.Session() as s:
+        s.execute(delete(db.Outreach).where(db.Outreach.id == oid))
+        s.commit()
+
+
+@app.get("/outreach/outbox.json")
+def outbox(_: str = Depends(user)):
+    """Queued emails in the format send_outreach.py reads. Suppressed addresses
+    are left out even if they were queued before the request to stop."""
+    supp = worker.suppression_set()
+    with db.Session() as s:
+        rows = s.scalars(select(db.Outreach).where(db.Outreach.status == "queued", db.Outreach.email != ""))
+        return [{"to": o.email, "subject": o.subject, "body": o.body.rstrip("\n") + "\n", "dia_outreach_id": o.id}
+                for o in rows if o.email.lower() not in supp]
+
+
 # ----------------------------------------------------------------- datasets
 
 class DatasetIn(BaseModel):
@@ -284,6 +403,7 @@ class DatasetIn(BaseModel):
     source: str = "manual"
     notes: str = Field("", max_length=2000)
     search_focus: list[str] = Field(default_factory=list)
+    outreach_blurb: str = Field("", max_length=1500)
 
 
 class HarmIn(BaseModel):

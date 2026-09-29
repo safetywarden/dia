@@ -58,7 +58,7 @@ export type DatasetProfile = {
   patients: number | null; disease_patients: Record<string, number>; sites: number | null;
   followup_median_years: number | null; diverse: boolean | null; prospective: boolean | null;
   population: string; coding: string[]; years: string; source: string; notes: string;
-  search_focus: string[];
+  search_focus: string[]; outreach_blurb?: string;
 };
 export type Dataset = { id: number; name: string; partner: string; profile: DatasetProfile;
   created_by: string; created_at: string; updated_at: string };
@@ -121,3 +121,34 @@ export const MARKETS = [
   { id: "uk", label: "United Kingdom", note: "ISRCTN trials, UKRI and Innovate UK grants" },
   { id: "in", label: "India & Asia", note: "BIRAC startup grants; Asian companies via FDA clearances and company research" },
 ] as const;
+
+export type Outreach = {
+  id: number; run_id: number | null; org_key: string; org_display: string; person_name: string;
+  email: string; found_at: string; subject: string; body: string; linkedin: string; angle: string;
+  status: "draft" | "queued" | "sent" | "skipped"; created_by: string; created_at: string;
+  updated_at: string; sent_at: string | null; warning?: string;
+};
+
+/** Where the GoDaddy send script lives on the sender's machine. */
+export const SEND_SCRIPT = String.raw`D:\BCONZ\PIA_PCIA_RDIA\imaging-archive\send_outreach.py`;
+
+/** A PowerShell command that sends one draft through the local send script.
+ *  The draft travels inside the command, so the script needs no API token;
+ *  after sending it opens DIA to mark the draft as sent. */
+export function sendCommand(o: Outreach): string {
+  const payload = { id: o.id, to: o.email, subject: o.subject, body: o.body,
+                    mark_sent_url: `${window.location.origin}/outreach?sent=${o.id}` };
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let bin = ""; bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `python "${SEND_SCRIPT}" --draft ${b64}`;
+}
+
+export function mailtoLink(o: Outreach): string {
+  return `mailto:${encodeURIComponent(o.email)}?subject=${encodeURIComponent(o.subject)}&body=${encodeURIComponent(o.body)}`;
+}
+
+export function linkedinSearch(o: Outreach): string {
+  const q = [o.person_name, o.org_display.replace(/[,.]?\s*(inc|ltd|llc|gmbh|corp)\.?$/i, "")].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/${o.person_name ? "people" : "companies"}/?keywords=${encodeURIComponent(q)}`;
+}

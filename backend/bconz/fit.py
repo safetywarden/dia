@@ -46,6 +46,9 @@ class DatasetProfile:
     # Data types a buyer search must mention (e.g. ["imaging"] for an imaging
     # archive, so "tuberculosis" finds imaging demand, not drug trials).
     search_focus: list[str] = field(default_factory=list)
+    # What outreach may say about this dataset (rounded figures, no partner name
+    # unless agreed). Empty: drafts describe it by origin and data type only.
+    outreach_blurb: str = ""
 
     def __post_init__(self):
         self.origin = [o for o in dict.fromkeys(self.origin or []) if o in SUPPLY]

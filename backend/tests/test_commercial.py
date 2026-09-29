@@ -144,3 +144,32 @@ def test_fda_panels_follow_the_data_types(monkeypatch):
     assert got(["ecg"]) == ["Cardiovascular"]
     assert got(["imaging"]) == ["Ophthalmic", "Radiology"]
     assert got(["ultrasound", "ecg"]) == ["Cardiovascular", "Radiology"]
+
+
+def test_draft_uses_the_most_concrete_evidence_and_no_dataset_figures():
+    from bconz import outreach
+    lead = {"org_display": "Qure.ai", "signals": [
+        {"source": "publications", "title": "Chest X-ray AI in India", "url": "p", "needs": {"company_rnd": "x"}},
+        {"source": "devices", "title": "qXR-Detect (K251934)", "date": "2025-08-01", "url": "d",
+         "needs": {"ai_product_imaging": "x"}}],
+        "fit": {"met": [{"need": "ai_product_imaging", "text": "training and validation data for a cleared "
+                         "imaging-AI product", "why": "dataset includes imaging data"}]}}
+    profile = {"origin": ["US"], "data_types": ["imaging", "ecg"], "patients": 528000}
+    d = outreach.draft(lead, profile, person_name="", found_at="qure.ai/contact")
+    assert d["angle"] == "device" and "FDA clearance of qXR-Detect (August 2025)" in d["body"]
+    assert "528" not in d["body"] and "US imaging and ecg" in d["body"].replace("  ", " ") \
+        or "imaging and ecg" in d["body"].lower()
+    assert d["subject"] == "Validation data for qXR-Detect"
+    approved = outreach.draft(lead, {**profile, "outreach_blurb": "A US archive of 700K+ portable chest X-rays."})
+    assert "700K+ portable chest X-rays" in approved["body"]
+
+
+def test_draft_quotes_the_stated_need():
+    from bconz import outreach
+    lead = {"org_display": "University of Iowa", "fit": {"anchor": {"url": "p1"}, "met": []}, "signals": [
+        {"source": "publications", "title": "AI for equitable lung cancer screening", "url": "p1",
+         "needs": {"diverse_population": "Criteria may overlook high-risk individuals, particularly in "
+                                         "underrepresented populations."}}]}
+    d = outreach.draft(lead, None, ["IN"], person_name="Jessica Sieren", found_at="the paper (Europe PMC)")
+    assert "particularly in underrepresented populations\"" in d["body"]
+    assert d["linkedin"].startswith("Hi Jessica,")
